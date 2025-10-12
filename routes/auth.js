@@ -12,6 +12,7 @@ router.post('/login', validateOwnerLogin, AuthController.login);
 // Protected routes
 router.get('/profile', authenticateToken, AuthController.getProfile);
 router.put('/profile', authenticateToken, AuthController.updateProfile);
+router.put('/change-password', authenticateToken, AuthController.changePassword);
 router.get('/owners', authenticateToken, AuthController.getAllOwners);
 router.post('/owners', authenticateToken, AuthController.createOwner);
 router.delete('/owners/:id', authenticateToken, AuthController.deleteOwner);

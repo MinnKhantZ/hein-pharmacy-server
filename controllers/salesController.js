@@ -139,6 +139,64 @@ class SalesController {
         }]
       });
       
+      // Send notifications after successful transaction
+      const notificationService = require('../services/notificationService');
+      
+      try {
+        // Get all active devices with their notification preferences
+        const devicesResult = await pool.query(
+          'SELECT push_token, low_stock_alerts, sales_notifications FROM devices WHERE is_active = true'
+        );
+        
+        console.log(`📱 Found ${devicesResult.rows.length} active device(s) for notifications`);
+        
+        if (devicesResult.rows.length === 0) {
+          console.log('⚠️ No active devices found. Notifications will not be sent.');
+        } else {
+          // 1. Check for low stock items and send alerts
+          const lowStockTokens = devicesResult.rows
+            .filter(device => device.low_stock_alerts)
+            .map(device => device.push_token);
+          
+          if (lowStockTokens.length > 0) {
+            for (const saleItemData of saleItemsData) {
+              const updatedItem = await InventoryItem.findByPk(saleItemData.inventory_item_id);
+              if (updatedItem && updatedItem.quantity <= updatedItem.minimum_stock) {
+                console.log(`📉 Low stock detected: ${updatedItem.name} (${updatedItem.quantity}/${updatedItem.minimum_stock})`);
+                console.log(`   Sending to ${lowStockTokens.length} device(s) with low stock alerts enabled`);
+                await notificationService.sendLowStockAlert(lowStockTokens, {
+                  id: updatedItem.id,
+                  name: updatedItem.name,
+                  current_quantity: updatedItem.quantity,
+                  minimum_stock: updatedItem.minimum_stock,
+                });
+              }
+            }
+          } else {
+            console.log('⚠️ No devices have low stock alerts enabled');
+          }
+          
+          // 2. Send sales notification to devices that have it enabled
+          const salesTokens = devicesResult.rows
+            .filter(device => device.sales_notifications)
+            .map(device => device.push_token);
+          
+          if (salesTokens.length > 0) {
+            console.log(`💰 Sending sales notification for sale #${sale.id} to ${salesTokens.length} device(s)`);
+            await notificationService.sendDailySalesNotification(salesTokens, {
+              sale_id: sale.id,
+              total_amount: totalAmount,
+              items_count: saleItemsData.length,
+            });
+          } else {
+            console.log('⚠️ No devices have sales notifications enabled');
+          }
+        }
+      } catch (notifError) {
+        // Don't fail the sale if notification fails
+        console.error('❌ Error sending notifications:', notifError.message);
+      }
+      
       res.status(201).json({
         message: 'Sale created successfully',
         sale: completeSale

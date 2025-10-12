@@ -10,6 +10,7 @@ const authRoutes = require('./routes/auth');
 const inventoryRoutes = require('./routes/inventory');
 const salesRoutes = require('./routes/sales');
 const incomeRoutes = require('./routes/income');
+const deviceRoutes = require('./routes/devices');
 
 // Import database migration
 const { createTables, seedData } = require('./migrations/migrate');
@@ -57,6 +58,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/income', incomeRoutes);
+app.use('/api/devices', deviceRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

@@ -49,7 +49,7 @@ class AuthController {
 
   static async login(req, res) {
     try {
-      const { username, password } = req.body;
+      const { username, password, push_token, device_id, device_model } = req.body;
 
       // Find owner by username
       const result = await pool.query(
@@ -79,6 +79,27 @@ class AuthController {
         process.env.JWT_SECRET,
         { expiresIn: process.env.JWT_EXPIRES_IN }
       );
+
+      // Register/update device push token if provided
+      if (push_token) {
+        try {
+          await pool.query(
+            `INSERT INTO devices (owner_id, push_token, device_id, device_model, last_active) 
+             VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+             ON CONFLICT (push_token) 
+             DO UPDATE SET 
+               owner_id = EXCLUDED.owner_id,
+               device_id = EXCLUDED.device_id,
+               device_model = EXCLUDED.device_model,
+               last_active = CURRENT_TIMESTAMP,
+               is_active = true`,
+            [owner.id, push_token, device_id, device_model]
+          );
+        } catch (deviceError) {
+          console.error('Error registering device token:', deviceError);
+          // Don't fail login if device registration fails
+        }
+      }
 
       // Remove password from response
       delete owner.password;
@@ -213,6 +234,52 @@ class AuthController {
       res.json({ message: 'Owner deleted successfully' });
     } catch (error) {
       console.error('Delete owner error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  static async changePassword(req, res) {
+    try {
+      const { currentPassword, newPassword } = req.body;
+
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ error: 'Current password and new password are required' });
+      }
+
+      if (newPassword.length < 6) {
+        return res.status(400).json({ error: 'New password must be at least 6 characters long' });
+      }
+
+      // Get current user with password
+      const result = await pool.query(
+        'SELECT id, password FROM owners WHERE id = $1',
+        [req.user.id]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Owner not found' });
+      }
+
+      const owner = result.rows[0];
+
+      // Verify current password
+      const isValidPassword = await bcrypt.compare(currentPassword, owner.password);
+      if (!isValidPassword) {
+        return res.status(401).json({ error: 'Current password is incorrect' });
+      }
+
+      // Hash new password
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+      // Update password
+      await pool.query(
+        'UPDATE owners SET password = $1 WHERE id = $2',
+        [hashedPassword, req.user.id]
+      );
+
+      res.json({ message: 'Password changed successfully' });
+    } catch (error) {
+      console.error('Change password error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   }

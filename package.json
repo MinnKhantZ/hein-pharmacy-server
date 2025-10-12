@@ -18,9 +18,11 @@
   "license": "ISC",
   "description": "Pharmacy inventory and income management backend",
   "dependencies": {
+    "axios": "^1.12.2",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
+    "expo-server-sdk": "^4.0.0",
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
     "helmet": "^7.1.0",
