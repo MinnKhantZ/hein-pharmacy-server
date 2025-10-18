@@ -3,7 +3,7 @@ const pool = require('../config/database');
 class InventoryController {
   static async getItems(req, res) {
     try {
-      const { page = 1, limit = 20, search, category, owner_id } = req.query;
+      const { page = 1, limit = 20, search, category, owner_id, sortBy = 'created_at', sortOrder = 'DESC' } = req.query;
       const offset = (page - 1) * limit;
 
       let query = `
@@ -37,7 +37,13 @@ class InventoryController {
         params.push(category);
       }
 
-      query += ` ORDER BY i.created_at DESC LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`;
+      // Sorting - validate and sanitize sort parameters
+      const validSortFields = ['name', 'quantity', 'unit_price', 'selling_price', 'created_at', 'category'];
+      const validSortOrders = ['ASC', 'DESC'];
+      const sortField = validSortFields.includes(sortBy) ? sortBy : 'created_at';
+      const sortDirection = validSortOrders.includes(sortOrder.toUpperCase()) ? sortOrder.toUpperCase() : 'DESC';
+
+      query += ` ORDER BY i.${sortField} ${sortDirection} LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`;
       params.push(limit, offset);
 
       const result = await pool.query(query, params);
@@ -295,6 +301,25 @@ class InventoryController {
       res.json(result.rows.map(row => row.category));
     } catch (error) {
       console.error('Get categories error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  static async getOwners(req, res) {
+    try {
+      // Everyone can see all owners (no admin restriction)
+      let query = `
+        SELECT id, username, full_name
+        FROM owners 
+        WHERE is_active = true
+        ORDER BY full_name
+      `;
+
+      const result = await pool.query(query);
+
+      res.json(result.rows);
+    } catch (error) {
+      console.error('Get owners error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   }

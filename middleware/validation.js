@@ -60,10 +60,11 @@ const validateSale = (req, res, next) => {
         quantity: Joi.number().integer().positive().required()
       })
     ).min(1).required(),
-    payment_method: Joi.string().valid('cash', 'card', 'mobile', 'credit').optional(),
+    payment_method: Joi.string().valid('cash', 'mobile').optional(),
     customer_name: Joi.string().max(100).optional(),
     customer_phone: Joi.string().max(20).optional(),
-    notes: Joi.string().optional()
+    notes: Joi.string().optional(),
+    device_push_token: Joi.string().optional()
   });
 
   const { error } = schema.validate(req.body);

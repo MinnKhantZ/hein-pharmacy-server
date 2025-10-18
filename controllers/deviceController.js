@@ -12,7 +12,8 @@ class DeviceController {
         device_id, 
         device_model,
         low_stock_alerts = true,
-        sales_notifications = true 
+        sales_notifications = true,
+        low_stock_alert_time = '09:00:00'
       } = req.body;
       const owner_id = req.user.id;
 
@@ -24,10 +25,10 @@ class DeviceController {
       const result = await pool.query(
         `INSERT INTO devices (
           owner_id, push_token, device_id, device_model, 
-          low_stock_alerts, sales_notifications, 
+          low_stock_alerts, sales_notifications, low_stock_alert_time,
           last_active, created_at, updated_at
         ) 
-         VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
          ON CONFLICT (push_token) 
          DO UPDATE SET 
            owner_id = EXCLUDED.owner_id,
@@ -35,11 +36,12 @@ class DeviceController {
            device_model = EXCLUDED.device_model,
            low_stock_alerts = EXCLUDED.low_stock_alerts,
            sales_notifications = EXCLUDED.sales_notifications,
+           low_stock_alert_time = EXCLUDED.low_stock_alert_time,
            last_active = CURRENT_TIMESTAMP,
            is_active = true,
            updated_at = CURRENT_TIMESTAMP
-         RETURNING id, push_token, low_stock_alerts, sales_notifications`,
-        [owner_id, push_token, device_id, device_model, low_stock_alerts, sales_notifications]
+         RETURNING id, push_token, low_stock_alerts, sales_notifications, low_stock_alert_time`,
+        [owner_id, push_token, device_id, device_model, low_stock_alerts, sales_notifications, low_stock_alert_time]
       );
 
       console.log(`✅ Device registered for owner ${owner_id}: ${push_token}`);
@@ -144,7 +146,7 @@ class DeviceController {
    */
   static async updateNotificationPreferences(req, res) {
     try {
-      const { push_token, low_stock_alerts, sales_notifications } = req.body;
+      const { push_token, low_stock_alerts, sales_notifications, low_stock_alert_time } = req.body;
       const owner_id = req.user.id;
 
       if (!push_token) {
@@ -155,10 +157,11 @@ class DeviceController {
         `UPDATE devices 
          SET low_stock_alerts = COALESCE($1, low_stock_alerts),
              sales_notifications = COALESCE($2, sales_notifications),
+             low_stock_alert_time = COALESCE($3, low_stock_alert_time),
              updated_at = CURRENT_TIMESTAMP
-         WHERE push_token = $3 AND owner_id = $4
-         RETURNING id, push_token, low_stock_alerts, sales_notifications`,
-        [low_stock_alerts, sales_notifications, push_token, owner_id]
+         WHERE push_token = $4 AND owner_id = $5
+         RETURNING id, push_token, low_stock_alerts, sales_notifications, low_stock_alert_time`,
+        [low_stock_alerts, sales_notifications, low_stock_alert_time, push_token, owner_id]
       );
 
       if (result.rowCount === 0) {

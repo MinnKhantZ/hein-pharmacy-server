@@ -164,8 +164,10 @@ class AuthController {
   static async getAllOwners(req, res) {
     try {
       // Everyone can get all owners (no admin restriction)
+      // Exclude admin user from the list (admin should not be assigned as owner in inventory)
       const result = await pool.query(
-        'SELECT id, username, full_name, email, phone, is_active, created_at FROM owners WHERE is_active = true ORDER BY full_name'
+        'SELECT id, username, full_name, email, phone, is_active, created_at FROM owners WHERE is_active = true AND username != $1 ORDER BY full_name',
+        ['admin']
       );
 
       res.json({ owners: result.rows });
@@ -202,8 +204,8 @@ class AuthController {
       const hashedPassword = await bcrypt.hash(password, 10);
 
       const result = await pool.query(
-        `INSERT INTO owners (username, password, full_name, email, phone) 
-         VALUES ($1, $2, $3, $4, $5) RETURNING id, username, full_name, email, phone, created_at`,
+        `INSERT INTO owners (username, password, full_name, email, phone, created_at, updated_at) 
+         VALUES ($1, $2, $3, $4, $5, NOW(), NOW()) RETURNING id, username, full_name, email, phone, created_at`,
         [username, hashedPassword, full_name, email, phone]
       );
 
@@ -234,6 +236,102 @@ class AuthController {
       res.json({ message: 'Owner deleted successfully' });
     } catch (error) {
       console.error('Delete owner error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  static async updateOwner(req, res) {
+    try {
+      // Only admin can update owners
+      if (req.user.username !== 'admin') {
+        return res.status(403).json({ error: 'Only admin can update owner accounts' });
+      }
+
+      const { id } = req.params;
+      const { full_name, email, phone } = req.body;
+
+      if (!full_name) {
+        return res.status(400).json({ error: 'Full name is required' });
+      }
+
+      // Check if owner exists
+      const existing = await pool.query(
+        'SELECT id, username FROM owners WHERE id = $1',
+        [id]
+      );
+
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ error: 'Owner not found' });
+      }
+
+      // Don't allow updating admin account
+      if (existing.rows[0].username === 'admin') {
+        return res.status(403).json({ error: 'Cannot update admin account' });
+      }
+
+      const result = await pool.query(
+        `UPDATE owners 
+         SET full_name = $1, email = $2, phone = $3, updated_at = NOW()
+         WHERE id = $4
+         RETURNING id, username, full_name, email, phone, is_active, created_at`,
+        [full_name, email, phone, id]
+      );
+
+      res.json({
+        message: 'Owner updated successfully',
+        owner: result.rows[0]
+      });
+    } catch (error) {
+      console.error('Update owner error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  static async resetOwnerPassword(req, res) {
+    try {
+      // Only admin can reset passwords
+      if (req.user.username !== 'admin') {
+        return res.status(403).json({ error: 'Only admin can reset passwords' });
+      }
+
+      const { id } = req.params;
+      const { newPassword } = req.body;
+
+      if (!newPassword) {
+        return res.status(400).json({ error: 'New password is required' });
+      }
+
+      if (newPassword.length < 6) {
+        return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+      }
+
+      // Check if owner exists
+      const existing = await pool.query(
+        'SELECT id, username FROM owners WHERE id = $1',
+        [id]
+      );
+
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ error: 'Owner not found' });
+      }
+
+      // Don't allow resetting admin password through this endpoint
+      if (existing.rows[0].username === 'admin') {
+        return res.status(403).json({ error: 'Cannot reset admin password through this endpoint' });
+      }
+
+      // Hash new password
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+      // Update password
+      await pool.query(
+        'UPDATE owners SET password = $1, updated_at = NOW() WHERE id = $2',
+        [hashedPassword, id]
+      );
+
+      res.json({ message: 'Password reset successfully' });
+    } catch (error) {
+      console.error('Reset password error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   }
@@ -280,6 +378,29 @@ class AuthController {
       res.json({ message: 'Password changed successfully' });
     } catch (error) {
       console.error('Change password error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  static async validateToken(req, res) {
+    try {
+      // Token is already validated by auth middleware
+      // Just return the user data
+      const result = await pool.query(
+        'SELECT id, username, full_name, email, phone, is_active, created_at FROM owners WHERE id = $1',
+        [req.user.id]
+      );
+
+      if (result.rows.length === 0 || !result.rows[0].is_active) {
+        return res.status(401).json({ error: 'Invalid or inactive account' });
+      }
+
+      res.json({
+        message: 'Token is valid',
+        owner: result.rows[0]
+      });
+    } catch (error) {
+      console.error('Validate token error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   }

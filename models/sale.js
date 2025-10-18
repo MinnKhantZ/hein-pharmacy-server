@@ -19,7 +19,7 @@ Sale.init({
     allowNull: false,
   },
   payment_method: {
-    type: DataTypes.ENUM('cash', 'mobile_wallet'),
+    type: DataTypes.ENUM('cash', 'mobile'),
     defaultValue: 'cash',
   },
   customer_name: DataTypes.STRING(100),

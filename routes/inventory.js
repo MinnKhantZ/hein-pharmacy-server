@@ -14,6 +14,9 @@ router.get('/', InventoryController.getItems);
 // Get categories
 router.get('/categories', InventoryController.getCategories);
 
+// Get owners
+router.get('/owners', InventoryController.getOwners);
+
 // Get low stock items
 router.get('/low-stock', InventoryController.getLowStockItems);
 

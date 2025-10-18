@@ -12,6 +12,9 @@ const salesRoutes = require('./routes/sales');
 const incomeRoutes = require('./routes/income');
 const deviceRoutes = require('./routes/devices');
 
+// Import services
+const cronService = require('./services/cronService');
+
 // Import database migration
 const { createTables, seedData } = require('./migrations/migrate');
 
@@ -90,17 +93,14 @@ app.use((err, req, res, next) => {
 // Initialize database and start server
 const startServer = async () => {
   try {
-    console.log('Creating database tables...');
-    await createTables();
-    
-    console.log('Seeding initial data...');
-    await seedData();
-    
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
       console.log(`📊 Health check: http://localhost:${PORT}/health`);
       console.log(`🏥 Pharmacy API: http://localhost:${PORT}/api`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+      
+      // Start cron jobs for scheduled tasks
+      cronService.startJobs();
     });
   } catch (error) {
     console.error('Failed to start server:', error);
@@ -111,11 +111,13 @@ const startServer = async () => {
 // Handle graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
+  cronService.stopJobs();
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
   console.log('SIGINT received, shutting down gracefully');
+  cronService.stopJobs();
   process.exit(0);
 });
 

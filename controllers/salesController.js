@@ -10,7 +10,7 @@ class SalesController {
     const transaction = await sequelize.transaction();
     
     try {
-      const { items, payment_method, customer_name, customer_phone, notes } = req.body;
+      const { items, payment_method, customer_name, customer_phone, notes, device_push_token } = req.body;
       
       if (!items || items.length === 0) {
         return res.status(400).json({ error: 'No items provided' });
@@ -144,6 +144,7 @@ class SalesController {
       
       try {
         // Get all active devices with their notification preferences
+        // Exclude the device that created the sale from receiving the sales notification
         const devicesResult = await pool.query(
           'SELECT push_token, low_stock_alerts, sales_notifications FROM devices WHERE is_active = true'
         );
@@ -153,43 +154,22 @@ class SalesController {
         if (devicesResult.rows.length === 0) {
           console.log('⚠️ No active devices found. Notifications will not be sent.');
         } else {
-          // 1. Check for low stock items and send alerts
-          const lowStockTokens = devicesResult.rows
-            .filter(device => device.low_stock_alerts)
-            .map(device => device.push_token);
-          
-          if (lowStockTokens.length > 0) {
-            for (const saleItemData of saleItemsData) {
-              const updatedItem = await InventoryItem.findByPk(saleItemData.inventory_item_id);
-              if (updatedItem && updatedItem.quantity <= updatedItem.minimum_stock) {
-                console.log(`📉 Low stock detected: ${updatedItem.name} (${updatedItem.quantity}/${updatedItem.minimum_stock})`);
-                console.log(`   Sending to ${lowStockTokens.length} device(s) with low stock alerts enabled`);
-                await notificationService.sendLowStockAlert(lowStockTokens, {
-                  id: updatedItem.id,
-                  name: updatedItem.name,
-                  current_quantity: updatedItem.quantity,
-                  minimum_stock: updatedItem.minimum_stock,
-                });
-              }
-            }
-          } else {
-            console.log('⚠️ No devices have low stock alerts enabled');
-          }
-          
-          // 2. Send sales notification to devices that have it enabled
+          // Send sales notification to devices that have it enabled
+          // EXCLUDE the device that created this sale
           const salesTokens = devicesResult.rows
             .filter(device => device.sales_notifications)
+            .filter(device => device.push_token !== device_push_token) // Exclude creating device
             .map(device => device.push_token);
           
           if (salesTokens.length > 0) {
-            console.log(`💰 Sending sales notification for sale #${sale.id} to ${salesTokens.length} device(s)`);
+            console.log(`💰 Sending sales notification for sale #${sale.id} to ${salesTokens.length} device(s) (excluding creator)`);
             await notificationService.sendDailySalesNotification(salesTokens, {
               sale_id: sale.id,
               total_amount: totalAmount,
               items_count: saleItemsData.length,
             });
           } else {
-            console.log('⚠️ No devices have sales notifications enabled');
+            console.log('⚠️ No other devices to notify about this sale');
           }
         }
       } catch (notifError) {
@@ -213,9 +193,61 @@ class SalesController {
 
   static async getSales(req, res) {
     try {
-      const { page = 1, limit = 20, start_date, end_date, owner_id } = req.query;
+      const { page = 1, limit = 20, start_date, end_date, owner_id, search, payment_method, sortBy = 'sale_date', sortOrder = 'DESC' } = req.query;
       const offset = (page - 1) * limit;
 
+      // Build WHERE conditions for filtering sales
+      let whereConditions = [];
+      let params = [];
+      let paramCount = 0;
+
+      // Date filters
+      if (start_date) {
+        paramCount++;
+        whereConditions.push(`s.sale_date >= $${paramCount}`);
+        params.push(start_date);
+      }
+      
+      if (end_date) {
+        paramCount++;
+        whereConditions.push(`s.sale_date <= $${paramCount}`);
+        params.push(end_date + ' 23:59:59');
+      }
+
+      // Payment method filter
+      if (payment_method) {
+        paramCount++;
+        whereConditions.push(`s.payment_method = $${paramCount}`);
+        params.push(payment_method);
+      }
+
+      // Search filter - customer name, phone, or item name
+      if (search) {
+        paramCount++;
+        whereConditions.push(`(
+          s.customer_name ILIKE $${paramCount} 
+          OR s.customer_phone ILIKE $${paramCount}
+          OR EXISTS (
+            SELECT 1 FROM sale_items si2
+            JOIN inventory_items i2 ON si2.inventory_item_id = i2.id
+            WHERE si2.sale_id = s.id AND i2.name ILIKE $${paramCount}
+          )
+        )`);
+        params.push(`%${search}%`);
+      }
+
+      // Build the WHERE clause
+      const whereClause = whereConditions.length > 0 
+        ? 'WHERE ' + whereConditions.join(' AND ')
+        : '';
+
+      // Sorting - validate and sanitize sort parameters
+      const validSortFields = ['sale_date', 'total_amount', 'payment_method', 'customer_name'];
+      const validSortOrders = ['ASC', 'DESC'];
+      const sortField = validSortFields.includes(sortBy) ? sortBy : 'sale_date';
+      const sortDirection = validSortOrders.includes(sortOrder.toUpperCase()) ? sortOrder.toUpperCase() : 'DESC';
+
+      // Main query - get filtered sales with items
       let query = `
         SELECT s.*, 
                json_agg(
@@ -231,68 +263,65 @@ class SalesController {
                  )
                ) as items
         FROM sales s
-        JOIN sale_items si ON s.id = si.sale_id
-        JOIN inventory_items i ON si.inventory_item_id = i.id
-        JOIN owners o ON si.owner_id = o.id
-        WHERE 1=1
+        ${whereClause}
+        ORDER BY s.${sortField} ${sortDirection}
+        LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}
       `;
-      let params = [];
-      let paramCount = 0;
-
-      // Date filters
-      if (start_date) {
-        paramCount++;
-        query += ` AND s.sale_date >= $${paramCount}`;
-        params.push(start_date);
-      }
       
-      if (end_date) {
-        paramCount++;
-        query += ` AND s.sale_date <= $${paramCount}`;
-        params.push(end_date + ' 23:59:59');
-      }
-
-      // Everyone can see all sales (no admin restriction)
-      // Apply owner filter if requested
+      // Add the items join as a lateral subquery
+      query = `
+        SELECT filtered_sales.*, 
+               (
+                 SELECT json_agg(
+                   json_build_object(
+                     'id', si.id,
+                     'inventory_item_id', si.inventory_item_id,
+                     'item_name', i.name,
+                     'quantity', si.quantity,
+                     'unit_price', si.unit_price,
+                     'total_price', si.total_price,
+                     'owner_id', si.owner_id,
+                     'owner_name', o.full_name
+                   )
+                 )
+                 FROM sale_items si
+                 JOIN inventory_items i ON si.inventory_item_id = i.id
+                 JOIN owners o ON si.owner_id = o.id
+                 WHERE si.sale_id = filtered_sales.id
+               ) as items
+        FROM (
+          SELECT s.*
+          FROM sales s
+          ${whereClause}
+          ${owner_id ? `AND EXISTS (
+            SELECT 1 FROM sale_items si3
+            WHERE si3.sale_id = s.id AND si3.owner_id = $${paramCount + 3}
+          )` : ''}
+          ORDER BY s.${sortField} ${sortDirection}
+          LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}
+        ) as filtered_sales
+      `;
+      
+      params.push(limit, offset);
       if (owner_id) {
-        paramCount++;
-        query += ` AND si.owner_id = $${paramCount}`;
         params.push(owner_id);
       }
 
-      query += ` GROUP BY s.id ORDER BY s.sale_date DESC LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`;
-      params.push(limit, offset);
-
       const result = await pool.query(query, params);
 
-      // Get total count
+      // Get total count - reuse the same WHERE conditions
       let countQuery = `
-        SELECT COUNT(DISTINCT s.id) 
+        SELECT COUNT(*) 
         FROM sales s
-        JOIN sale_items si ON s.id = si.sale_id
-        WHERE 1=1
+        ${whereClause}
+        ${owner_id ? `AND EXISTS (
+          SELECT 1 FROM sale_items si3
+          WHERE si3.sale_id = s.id AND si3.owner_id = $${paramCount + 3}
+        )` : ''}
       `;
-      let countParams = [];
-      let countParamCount = 0;
-
-      if (start_date) {
-        countParamCount++;
-        countQuery += ` AND s.sale_date >= $${countParamCount}`;
-        countParams.push(start_date);
-      }
       
-      if (end_date) {
-        countParamCount++;
-        countQuery += ` AND s.sale_date <= $${countParamCount}`;
-        countParams.push(end_date + ' 23:59:59');
-      }
-
-      // Everyone can see all sales (no admin restriction)
-      if (owner_id) {
-        countParamCount++;
-        countQuery += ` AND si.owner_id = $${countParamCount}`;
-        countParams.push(owner_id);
-      }
+      // Reuse the same params for count (excluding limit and offset)
+      const countParams = params.slice(0, owner_id ? paramCount + 1 : paramCount);
 
       const countResult = await pool.query(countQuery, countParams);
 
