@@ -11,9 +11,7 @@ const inventoryRoutes = require('./routes/inventory');
 const salesRoutes = require('./routes/sales');
 const incomeRoutes = require('./routes/income');
 const deviceRoutes = require('./routes/devices');
-
-// Import services
-const cronService = require('./services/cronService');
+const notificationRoutes = require('./routes/notifications');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -59,6 +57,7 @@ app.use('/api/inventory', inventoryRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/income', incomeRoutes);
 app.use('/api/devices', deviceRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {
@@ -95,9 +94,7 @@ const startServer = async () => {
       console.log(`📊 Health check: http://localhost:${PORT}/health`);
       console.log(`🏥 Pharmacy API: http://localhost:${PORT}/api`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-      
-      // Start cron jobs for scheduled tasks
-      cronService.startJobs();
+      console.log(`⏰ Cron-triggered notifications: POST to /api/notifications/cron/low-stock`);
     });
   } catch (error) {
     console.error('Failed to start server:', error);
@@ -108,13 +105,11 @@ const startServer = async () => {
 // Handle graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
-  cronService.stopJobs();
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
   console.log('SIGINT received, shutting down gracefully');
-  cronService.stopJobs();
   process.exit(0);
 });
 

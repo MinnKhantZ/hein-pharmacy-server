@@ -2,6 +2,31 @@ const cron = require('node-cron');
 const pool = require('../config/database');
 const notificationService = require('./notificationService');
 
+function getMyanmarTime() {
+  const now = new Date();
+  const utcHours = now.getUTCHours();
+  const utcMinutes = now.getUTCMinutes();
+  
+  // Myanmar Time = UTC + 6 hours 30 minutes
+  let myanmarHours = utcHours + 6;
+  let myanmarMinutes = utcMinutes + 30;
+  
+  // Handle overflows
+  if (myanmarMinutes >= 60) {
+    myanmarHours += 1;
+    myanmarMinutes -= 60;
+  }
+  if (myanmarHours >= 24) {
+    myanmarHours -= 24;
+  }
+  
+  return {
+    hours: String(myanmarHours).padStart(2, '0'),
+    minutes: String(myanmarMinutes).padStart(2, '0'),
+    fullTime: `${String(myanmarHours).padStart(2, '0')}:${String(myanmarMinutes).padStart(2, '0')}:00`
+  };
+}
+
 class CronService {
   constructor() {
     this.jobs = [];
@@ -29,17 +54,15 @@ class CronService {
    */
   async checkAndNotifyLowStockPerDevice() {
     try {
-      const now = new Date();
-      const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:00`;
+      const myanmarTime = getMyanmarTime();
       
-      // Get devices that should receive notifications at this time
       const devicesResult = await pool.query(`
         SELECT push_token, low_stock_alert_time 
         FROM devices 
         WHERE is_active = true 
           AND low_stock_alerts = true
           AND low_stock_alert_time::text LIKE $1
-      `, [`${currentTime.substring(0, 5)}%`]); // Match HH:MM
+      `, [`${myanmarTime.hours}:${myanmarTime.minutes}%`]);
 
       if (devicesResult.rows.length === 0) {
         return; // No devices to notify at this time
@@ -69,7 +92,7 @@ class CronService {
 
       const lowStockTokens = devicesResult.rows.map(d => d.push_token);
       
-      console.log(`🔔 [${currentTime}] Sending low stock alerts to ${lowStockTokens.length} device(s) for ${lowStockItems.length} item(s)`);
+      console.log(`🔔 [${myanmarTime.fullTime}] Sending low stock alerts to ${lowStockTokens.length} device(s) for ${lowStockItems.length} item(s)`);
 
       // Send notification for each low stock item
       for (const item of lowStockItems) {
