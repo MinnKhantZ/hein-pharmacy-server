@@ -17,4 +17,7 @@ router.get('/:id', SalesController.getSale);
 // Create new sale
 router.post('/', validateSale, SalesController.createSale);
 
+// Mark sale as paid
+router.patch('/:id/mark-paid', SalesController.markAsPaid);
+
 module.exports = router;

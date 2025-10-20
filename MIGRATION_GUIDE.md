@@ -9,12 +9,11 @@ hein-pharmacy-server/
 ├── .sequelizerc                 # Sequelize CLI configuration
 ├── config/
 │   ├── config.js               # Sequelize database configuration
-│   └── database.js             # Direct database connection (legacy)
+│   └── database.js             # Direct database connection
 ├── db/
-│   ├── migrations/             # Database migration files
+│   ├── migrations/             # Database migration files ✅ ONLY LOCATION
 │   └── seeders/                # Database seeder files
-├── models/                     # Sequelize models
-└── migrations/                 # Old migration system (deprecated)
+└── models/                     # Sequelize models
 ```
 
 ## Available Scripts
@@ -200,6 +199,12 @@ npm run db:migrate
 5. **Document complex migrations** - Add comments for clarity
 6. **Backup before migrating** - Especially in production
 
-## Legacy Support
+## Important: Single Migration System ⚠️
 
-The old migration system (`migrations/migrate.js`) is still available via `npm run migrate` but is deprecated. It's recommended to use the new Sequelize CLI migrations going forward.
+**Migration Cleanup Complete:**
+- ✅ Only `db/migrations/` is used for all database changes
+- ❌ Old `migrations/` folder has been removed
+- ❌ `migrations/migrate.js` script is no longer available
+- ❌ `npm run migrate` script has been removed
+
+**All migrations go in:** `db/migrations/`

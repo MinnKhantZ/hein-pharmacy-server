@@ -19,8 +19,17 @@ Sale.init({
     allowNull: false,
   },
   payment_method: {
-    type: DataTypes.ENUM('cash', 'mobile'),
+    type: DataTypes.ENUM('cash', 'mobile', 'credit'),
     defaultValue: 'cash',
+  },
+  is_paid: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: true,
+    allowNull: false,
+  },
+  paid_date: {
+    type: DataTypes.DATE,
+    allowNull: true,
   },
   customer_name: DataTypes.STRING(100),
   customer_phone: DataTypes.STRING(20),

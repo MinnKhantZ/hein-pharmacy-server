@@ -173,7 +173,7 @@ class IncomeController {
         JOIN inventory_items i ON si.inventory_item_id = i.id
         JOIN owners o ON si.owner_id = o.id
         JOIN sales s ON si.sale_id = s.id
-        WHERE 1=1
+        WHERE s.is_paid = TRUE
       `;
       let params = [];
       let paramCount = 0;
@@ -231,7 +231,7 @@ class IncomeController {
         JOIN inventory_items i ON si.inventory_item_id = i.id
         JOIN owners o ON si.owner_id = o.id
         JOIN sales s ON si.sale_id = s.id
-        WHERE 1=1
+        WHERE s.is_paid = TRUE
       `;
       let params = [];
       let paramCount = 0;
@@ -317,7 +317,7 @@ class IncomeController {
           AVG(s.total_amount) as avg_sale_amount
         FROM sales s
         JOIN sale_items si ON s.id = si.sale_id
-        WHERE 1=1 ${dateFilter} ${ownerFilter}
+        WHERE s.is_paid = TRUE ${dateFilter} ${ownerFilter}
       `;
 
       const statsResult = await pool.query(statsQuery, params);

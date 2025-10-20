@@ -57,9 +57,13 @@ class SalesController {
       }
       
       // Create sale record
+      // For credit payment, set is_paid to false; for cash/mobile, set to true with paid_date
+      const isPaid = payment_method !== 'credit';
       const sale = await Sale.create({
         total_amount: totalAmount,
         payment_method: payment_method || 'cash',
+        is_paid: isPaid,
+        paid_date: isPaid ? new Date() : null,
         customer_name,
         customer_phone,
         notes
@@ -99,28 +103,30 @@ class SalesController {
         ownerIncomes[saleItemData.owner_id].total_items_sold += saleItemData.quantity;
       }
       
-      // Update income summaries
-      const today = new Date().toISOString().split('T')[0];
-      for (const [ownerId, incomeData] of Object.entries(ownerIncomes)) {
-        const [summary, created] = await IncomeSummary.findOrCreate({
-          where: { owner_id: ownerId, date: today },
-          defaults: {
-            owner_id: ownerId,
-            date: today,
-            total_sales: incomeData.total_sales,
-            total_profit: incomeData.total_profit,
-            total_items_sold: incomeData.total_items_sold
-          },
-          transaction
-        });
-        
-        // If already exists, increment the values
-        if (!created) {
-          await summary.increment({
-            total_sales: incomeData.total_sales,
-            total_profit: incomeData.total_profit,
-            total_items_sold: incomeData.total_items_sold
-          }, { transaction });
+      // Update income summaries ONLY if the sale is paid (not credit or already paid)
+      if (isPaid) {
+        const today = new Date().toISOString().split('T')[0];
+        for (const [ownerId, incomeData] of Object.entries(ownerIncomes)) {
+          const [summary, created] = await IncomeSummary.findOrCreate({
+            where: { owner_id: ownerId, date: today },
+            defaults: {
+              owner_id: ownerId,
+              date: today,
+              total_sales: incomeData.total_sales,
+              total_profit: incomeData.total_profit,
+              total_items_sold: incomeData.total_items_sold
+            },
+            transaction
+          });
+          
+          // If already exists, increment the values
+          if (!created) {
+            await summary.increment({
+              total_sales: incomeData.total_sales,
+              total_profit: incomeData.total_profit,
+              total_items_sold: incomeData.total_items_sold
+            }, { transaction });
+          }
         }
       }
       
@@ -378,6 +384,110 @@ class SalesController {
       res.json(result.rows[0]);
     } catch (error) {
       console.error('Get sale error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  static async markAsPaid(req, res) {
+    const transaction = await sequelize.transaction();
+    
+    try {
+      const { id } = req.params;
+      
+      // Find the sale
+      const sale = await Sale.findByPk(id, { transaction });
+      
+      if (!sale) {
+        await transaction.rollback();
+        return res.status(404).json({ error: 'Sale not found' });
+      }
+      
+      // Check if already paid
+      if (sale.is_paid) {
+        await transaction.rollback();
+        return res.status(400).json({ error: 'Sale is already marked as paid' });
+      }
+      
+      // Get the sale date (original transaction date)
+      const saleDate = new Date(sale.sale_date).toISOString().split('T')[0];
+      
+      // Mark as paid
+      sale.is_paid = true;
+      sale.paid_date = new Date();
+      await sale.save({ transaction });
+      
+      // Get sale items with inventory details to calculate income
+      const saleItems = await SaleItem.findAll({
+        where: { sale_id: id },
+        include: [{
+          model: InventoryItem,
+          as: 'inventoryItem',
+          attributes: ['unit_price', 'selling_price']
+        }],
+        transaction
+      });
+      
+      // Calculate income per owner based on the ORIGINAL sale date
+      const ownerIncomes = {};
+      for (const saleItem of saleItems) {
+        if (!ownerIncomes[saleItem.owner_id]) {
+          ownerIncomes[saleItem.owner_id] = {
+            total_sales: 0,
+            total_profit: 0,
+            total_items_sold: 0
+          };
+        }
+        
+        const itemTotal = Number(saleItem.total_price);
+        const unitCost = Number(saleItem.inventoryItem.unit_price);
+        const income = (Number(saleItem.unit_price) - unitCost) * saleItem.quantity;
+        
+        ownerIncomes[saleItem.owner_id].total_sales += itemTotal;
+        ownerIncomes[saleItem.owner_id].total_profit += income;
+        ownerIncomes[saleItem.owner_id].total_items_sold += saleItem.quantity;
+      }
+      
+      // Update income summaries for the ORIGINAL sale date (not today)
+      for (const [ownerId, incomeData] of Object.entries(ownerIncomes)) {
+        const [summary, created] = await IncomeSummary.findOrCreate({
+          where: { owner_id: ownerId, date: saleDate },
+          defaults: {
+            owner_id: ownerId,
+            date: saleDate,
+            total_sales: incomeData.total_sales,
+            total_profit: incomeData.total_profit,
+            total_items_sold: incomeData.total_items_sold
+          },
+          transaction
+        });
+        
+        // If already exists, increment the values
+        if (!created) {
+          await summary.increment({
+            total_sales: incomeData.total_sales,
+            total_profit: incomeData.total_profit,
+            total_items_sold: incomeData.total_items_sold
+          }, { transaction });
+        }
+      }
+      
+      await transaction.commit();
+      
+      res.json({
+        message: 'Sale marked as paid successfully',
+        sale: {
+          id: sale.id,
+          is_paid: sale.is_paid,
+          paid_date: sale.paid_date,
+          sale_date: sale.sale_date
+        }
+      });
+      
+    } catch (error) {
+      if (transaction) {
+        await transaction.rollback();
+      }
+      console.error('Mark as paid error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   }

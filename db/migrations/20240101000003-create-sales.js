@@ -23,8 +23,17 @@ module.exports = {
         allowNull: false,
       },
       payment_method: {
-        type: Sequelize.ENUM('cash', 'mobile'),
+        type: Sequelize.ENUM('cash', 'mobile', 'credit'),
         defaultValue: 'cash',
+      },
+      is_paid: {
+        type: Sequelize.BOOLEAN,
+        defaultValue: true,
+        allowNull: false,
+      },
+      paid_date: {
+        type: Sequelize.DATE,
+        allowNull: true,
       },
       customer_name: {
         type: Sequelize.STRING(100),

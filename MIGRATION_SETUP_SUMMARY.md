@@ -123,36 +123,29 @@ npm run db:migrate
 
 ## Comparison: Old vs New
 
-### Old System (migrations/migrate.js)
-```javascript
-await sequelize.sync({ alter: true });
-await seedData();
-```
-❌ No version control
-❌ Can't rollback
-❌ Risky for production
-❌ No collaboration tracking
-
-### New System (Sequelize CLI)
+### New System (Sequelize CLI) ✅
 ```bash
-npm run db:migrate
-npm run db:seed:all
+npm run db:migrate       # Version controlled, rollback capable
+npm run db:seed:all     # Separate seed management
 ```
-✅ Version controlled
-✅ Rollback capability
-✅ Production safe
-✅ Team collaboration
-✅ Clear audit trail
+
+**Benefits:**
+- ✅ Version controlled schema changes
+- ✅ Rollback capability for each migration
+- ✅ Production safe
+- ✅ Team collaboration with audit trail
+- ✅ Clear change history
 
 ## Important Notes
 
-1. **Legacy Support**: The old `migrations/migrate.js` script is still available but deprecated
-2. **No Breaking Changes**: Existing code continues to work
+1. **Single Migration System**: Only Sequelize CLI migrations in `db/migrations/`
+2. **Old System Removed**: The deprecated `migrations/` folder has been completely removed
 3. **Database Compatibility**: Works with existing PostgreSQL setup
 4. **Environment Variables**: Uses same .env variables as before
+5. **Credit Payment**: Fully integrated into main schema
 
 ## References
 
 - Sequelize CLI Documentation: https://sequelize.org/docs/v6/other-topics/migrations/
-- Easy2Success Server: \\wsl.localhost\Ubuntu\home\min\easy2success-server
 - Migration Guide: See MIGRATION_GUIDE.md for detailed instructions
+- Credit Payment: See CREDIT_PAYMENT_IMPLEMENTATION.md

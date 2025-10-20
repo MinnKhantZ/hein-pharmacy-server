@@ -49,6 +49,13 @@ module.exports = {
     await queryInterface.addIndex('income_summary', ['owner_id', 'date'], {
       unique: true,
       name: 'income_summary_owner_id_date_unique',
+    }).catch(err => {
+      // Ignore error if index already exists
+      if (err.message.includes('already exists')) {
+        console.log('Index already exists, skipping creation');
+      } else {
+        throw err;
+      }
     });
   },
 

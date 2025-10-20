@@ -48,6 +48,12 @@ module.exports = {
         type: Sequelize.BOOLEAN,
         defaultValue: true,
       },
+      low_stock_alert_time: {
+        type: Sequelize.TIME,
+        allowNull: false,
+        defaultValue: '09:00:00',
+        comment: 'Time of day to send low stock notifications (HH:MM:SS format)',
+      },
       created_at: {
         allowNull: false,
         type: Sequelize.DATE,

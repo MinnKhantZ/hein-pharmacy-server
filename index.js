@@ -15,9 +15,6 @@ const deviceRoutes = require('./routes/devices');
 // Import services
 const cronService = require('./services/cronService');
 
-// Import database migration
-const { createTables, seedData } = require('./migrations/migrate');
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
