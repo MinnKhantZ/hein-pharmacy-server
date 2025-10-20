@@ -491,6 +491,240 @@ class SalesController {
       res.status(500).json({ error: 'Internal server error' });
     }
   }
+
+  static async updateSale(req, res) {
+    const transaction = await sequelize.transaction();
+    
+    try {
+      const { id } = req.params;
+      const { items, customer_name, customer_phone, notes, payment_method } = req.body;
+      
+      // Find the sale
+      const sale = await Sale.findByPk(id, { transaction });
+      
+      if (!sale) {
+        await transaction.rollback();
+        return res.status(404).json({ error: 'Sale not found' });
+      }
+
+      // If sale is paid, don't allow editing
+      if (sale.is_paid) {
+        await transaction.rollback();
+        return res.status(400).json({ error: 'Cannot edit a paid sale' });
+      }
+      
+      // Get old sale items to restore inventory
+      const oldSaleItems = await SaleItem.findAll({
+        where: { sale_id: id },
+        include: [{
+          model: InventoryItem,
+          as: 'inventoryItem'
+        }],
+        transaction
+      });
+      
+      // Restore inventory for old items
+      for (const saleItem of oldSaleItems) {
+        await saleItem.inventoryItem.increment('quantity', {
+          by: saleItem.quantity,
+          transaction
+        });
+      }
+      
+      // Delete old sale items
+      await SaleItem.destroy({
+        where: { sale_id: id },
+        transaction
+      });
+      
+      // Validate new items
+      let totalAmount = 0;
+      const saleItemsData = [];
+      
+      for (const item of items) {
+        const inventoryItem = await InventoryItem.findOne({
+          where: { id: item.inventory_item_id, is_active: true },
+          transaction
+        });
+        
+        if (!inventoryItem) {
+          await transaction.rollback();
+          return res.status(400).json({ error: `Item with ID ${item.inventory_item_id} not found` });
+        }
+        
+        if (inventoryItem.quantity < item.quantity) {
+          await transaction.rollback();
+          return res.status(400).json({ 
+            error: `Insufficient stock for ${inventoryItem.name}. Available: ${inventoryItem.quantity}, Requested: ${item.quantity}` 
+          });
+        }
+        
+        const itemTotal = Number(inventoryItem.selling_price) * item.quantity;
+        totalAmount += itemTotal;
+        
+        saleItemsData.push({
+          inventory_item_id: item.inventory_item_id,
+          quantity: item.quantity,
+          unit_price: inventoryItem.selling_price,
+          total_price: itemTotal,
+          owner_id: inventoryItem.owner_id,
+          inventoryItem: inventoryItem
+        });
+      }
+      
+      // Update sale
+      sale.total_amount = totalAmount;
+      sale.customer_name = customer_name || null;
+      sale.customer_phone = customer_phone || null;
+      sale.notes = notes || null;
+      sale.payment_method = payment_method || sale.payment_method;
+      await sale.save({ transaction });
+      
+      // Create new sale items and update inventory
+      for (const saleItemData of saleItemsData) {
+        await SaleItem.create({
+          sale_id: sale.id,
+          inventory_item_id: saleItemData.inventory_item_id,
+          quantity: saleItemData.quantity,
+          unit_price: saleItemData.unit_price,
+          total_price: saleItemData.total_price,
+          owner_id: saleItemData.owner_id
+        }, { transaction });
+        
+        // Decrease inventory
+        await saleItemData.inventoryItem.decrement('quantity', {
+          by: saleItemData.quantity,
+          transaction
+        });
+      }
+      
+      await transaction.commit();
+      
+      // Fetch updated sale
+      const updatedSale = await Sale.findByPk(id, {
+        include: [{
+          model: SaleItem,
+          as: 'items',
+          include: [{
+            model: InventoryItem,
+            as: 'inventoryItem',
+            attributes: ['name']
+          }]
+        }]
+      });
+      
+      res.json({
+        message: 'Sale updated successfully',
+        sale: updatedSale
+      });
+      
+    } catch (error) {
+      if (transaction) {
+        await transaction.rollback();
+      }
+      console.error('Update sale error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  static async deleteSale(req, res) {
+    const transaction = await sequelize.transaction();
+    
+    try {
+      const { id } = req.params;
+      
+      // Find the sale
+      const sale = await Sale.findByPk(id, { transaction });
+      
+      if (!sale) {
+        await transaction.rollback();
+        return res.status(404).json({ error: 'Sale not found' });
+      }
+
+      // Get sale items
+      const saleItems = await SaleItem.findAll({
+        where: { sale_id: id },
+        include: [{
+          model: InventoryItem,
+          as: 'inventoryItem'
+        }],
+        transaction
+      });
+      
+      // Restore inventory
+      for (const saleItem of saleItems) {
+        await saleItem.inventoryItem.increment('quantity', {
+          by: saleItem.quantity,
+          transaction
+        });
+      }
+      
+      // If sale was paid, adjust income summary
+      if (sale.is_paid) {
+        const saleDate = new Date(sale.sale_date).toISOString().split('T')[0];
+        
+        // Calculate income to remove
+        const ownerIncomes = {};
+        for (const saleItem of saleItems) {
+          if (!ownerIncomes[saleItem.owner_id]) {
+            ownerIncomes[saleItem.owner_id] = {
+              total_sales: 0,
+              total_profit: 0,
+              total_items_sold: 0
+            };
+          }
+          
+          const itemTotal = Number(saleItem.total_price);
+          const unitCost = Number(saleItem.inventoryItem.unit_price);
+          const income = (Number(saleItem.unit_price) - unitCost) * saleItem.quantity;
+          
+          ownerIncomes[saleItem.owner_id].total_sales += itemTotal;
+          ownerIncomes[saleItem.owner_id].total_profit += income;
+          ownerIncomes[saleItem.owner_id].total_items_sold += saleItem.quantity;
+        }
+        
+        // Decrement income summaries
+        for (const [ownerId, incomeData] of Object.entries(ownerIncomes)) {
+          const summary = await IncomeSummary.findOne({
+            where: { owner_id: ownerId, date: saleDate },
+            transaction
+          });
+          
+          if (summary) {
+            // Decrement the values
+            await summary.decrement({
+              total_sales: incomeData.total_sales,
+              total_profit: incomeData.total_profit,
+              total_items_sold: incomeData.total_items_sold
+            }, { transaction });
+          }
+        }
+      }
+      
+      // Delete sale items
+      await SaleItem.destroy({
+        where: { sale_id: id },
+        transaction
+      });
+      
+      // Delete sale
+      await sale.destroy({ transaction });
+      
+      await transaction.commit();
+      
+      res.json({
+        message: 'Sale deleted successfully',
+        sale_id: id
+      });
+      
+    } catch (error) {
+      if (transaction) {
+        await transaction.rollback();
+      }
+      console.error('Delete sale error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
 }
 
 module.exports = SalesController;

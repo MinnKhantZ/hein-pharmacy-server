@@ -20,4 +20,10 @@ router.post('/', validateSale, SalesController.createSale);
 // Mark sale as paid
 router.patch('/:id/mark-paid', SalesController.markAsPaid);
 
+// Update sale
+router.put('/:id', validateSale, SalesController.updateSale);
+
+// Delete sale
+router.delete('/:id', SalesController.deleteSale);
+
 module.exports = router;
