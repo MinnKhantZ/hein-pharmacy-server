@@ -24,6 +24,11 @@ A comprehensive pharmacy management system built with React Native (Expo) fronte
 - Input validation and sanitization
 - Rate limiting and security middleware
 - Comprehensive error handling
+- **Push Notifications**: Expo push notifications for low stock alerts and sales updates
+- **Device Management**: Multi-device support with individual notification preferences
+- **Advanced Filtering**: Server-side search, filter, and sort for inventory and sales
+- **Cron Jobs**: Automated tasks for data maintenance and notifications
+- **Lazy Loading**: Efficient data loading with pagination
 
 ## Tech Stack
 
@@ -108,6 +113,7 @@ cp .env.example .env
 # DB_USER=your_username
 # DB_PASSWORD=your_password
 # JWT_SECRET=your_very_long_jwt_secret_key_here
+# EXPO_ACCESS_TOKEN=your_expo_access_token_for_push_notifications
 ```
 
 ### 3. Database Setup
@@ -175,6 +181,13 @@ npx expo start
 - `GET /api/income/top-selling` - Top selling items
 - `GET /api/income/stats` - Overall statistics
 
+### Device & Notifications
+- `POST /api/devices/register` - Register device for push notifications
+- `PUT /api/devices/preferences` - Update notification preferences
+- `GET /api/devices/my-devices` - Get user's registered devices
+- `DELETE /api/devices/:id` - Unregister device
+- `POST /api/notifications/test` - Send test notification
+
 ## Default Accounts
 
 After running migrations, these accounts are available:
@@ -197,6 +210,23 @@ cd hein-pharmacy-client
 npx expo start  # Choose platform (iOS/Android/Web)
 ```
 
+### Notification Setup
+To enable push notifications:
+
+1. **Get Expo Access Token**:
+   - Go to [Expo Account Settings](https://expo.dev/settings/access-tokens)
+   - Create a new access token
+   - Add to `.env`: `EXPO_ACCESS_TOKEN=your_token_here`
+
+2. **Test Notifications**:
+   ```bash
+   # Send test notification
+   curl -X POST http://localhost:3000/api/notifications/test \
+     -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"message": "Test notification"}'
+   ```
+
 ### Database Migrations
 To reset and recreate the database:
 ```bash
@@ -213,13 +243,33 @@ npm run migrate
 - CORS configuration
 - Security headers with Helmet
 
-## Performance Optimizations
+## Advanced Features
 
+### 🔔 Push Notifications
+- **Low Stock Alerts**: Automatic notifications when items reach minimum stock levels
+- **Sales Notifications**: Real-time alerts for new sales transactions
+- **Device Management**: Support for multiple devices per user with individual preferences
+- **Customizable Preferences**: Users can enable/disable specific notification types per device
+
+### 🔍 Advanced Filtering & Search
+- **Inventory Search**: Search by name, description, barcode with fuzzy matching
+- **Multi-Filter Support**: Combine category, owner, and search filters
+- **Dynamic Sorting**: Sort by name, quantity, price, date with ASC/DESC order
+- **Sales Filtering**: Filter by date range, payment method, customer info
+- **Pagination**: Efficient data loading with configurable page sizes
+
+### ⏰ Automated Tasks
+- **Cron Jobs**: Scheduled tasks for data maintenance and notifications
+- **Income Summarization**: Automatic calculation of daily/monthly income summaries
+- **Notification Scheduling**: Time-based notifications for different devices
+- **Data Cleanup**: Automated removal of old logs and temporary data
+
+### 📊 Performance Optimizations
 - Database indexes on frequently queried columns
-- Income summary table for fast analytics
-- Pagination for large datasets
-- Connection pooling
-- Query optimization
+- Income summary table for fast analytics queries
+- Connection pooling for database efficiency
+- Query optimization with proper JOINs and WHERE clauses
+- Lazy loading for large datasets
 
 ## Deployment
 
