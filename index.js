@@ -28,10 +28,30 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 // CORS configuration
-app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:8081',
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Get allowed origins from environment variable (comma-separated)
+    const allowedOrigins = process.env.CORS_ORIGINS 
+      ? process.env.CORS_ORIGINS.split(',').map(origin => origin.trim())
+      : (process.env.CORS_ORIGIN 
+          ? [process.env.CORS_ORIGIN.trim()]
+          : ['http://localhost:8081']);
+
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+
+    // Check if the origin is in the allowed list
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.warn(`CORS blocked request from origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
-}));
+};
+
+app.use(cors(corsOptions));
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
@@ -94,6 +114,15 @@ const startServer = async () => {
       console.log(`📊 Health check: http://localhost:${PORT}/health`);
       console.log(`🏥 Pharmacy API: http://localhost:${PORT}/api`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+      
+      // Log CORS configuration
+      const allowedOrigins = process.env.CORS_ORIGINS 
+        ? process.env.CORS_ORIGINS.split(',').map(origin => origin.trim())
+        : (process.env.CORS_ORIGIN 
+            ? [process.env.CORS_ORIGIN.trim()]
+            : ['http://localhost:8081']);
+      console.log(`🌐 CORS allowed origins: ${allowedOrigins.join(', ')}`);
+      
       console.log(`⏰ Cron-triggered notifications: POST to /api/notifications/cron/low-stock`);
     });
   } catch (error) {
