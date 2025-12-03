@@ -12,6 +12,7 @@ const salesRoutes = require('./routes/sales');
 const incomeRoutes = require('./routes/income');
 const deviceRoutes = require('./routes/devices');
 const notificationRoutes = require('./routes/notifications');
+const cronService = require('./services/cronService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -124,6 +125,9 @@ const startServer = async () => {
       console.log(`🌐 CORS allowed origins: ${allowedOrigins.join(', ')}`);
       
       console.log(`⏰ Cron-triggered notifications: POST to /api/notifications/cron/low-stock`);
+      
+      // Start internal cron jobs
+      cronService.startJobs();
     });
   } catch (error) {
     console.error('Failed to start server:', error);
