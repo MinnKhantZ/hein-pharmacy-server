@@ -507,13 +507,11 @@ class SalesController {
         return res.status(404).json({ error: 'Sale not found' });
       }
 
-      // If sale is paid, don't allow editing
-      if (sale.is_paid) {
-        await transaction.rollback();
-        return res.status(400).json({ error: 'Cannot edit a paid sale' });
-      }
+      // Store old values for income summary adjustments
+      const oldSaleDate = new Date(sale.sale_date).toISOString().split('T')[0];
+      const wasPaid = sale.is_paid;
       
-      // Get old sale items to restore inventory
+      // Get old sale items to restore inventory and calculate old income
       const oldSaleItems = await SaleItem.findAll({
         where: { sale_id: id },
         include: [{
@@ -578,7 +576,104 @@ class SalesController {
       sale.customer_phone = customer_phone || null;
       sale.notes = notes || null;
       sale.payment_method = payment_method || sale.payment_method;
+      
+      // Update is_paid based on payment method
+      // Credit payments are unpaid, cash/mobile are paid
+      sale.is_paid = sale.payment_method !== 'credit';
+      if (sale.is_paid && !wasPaid) {
+        sale.paid_date = new Date();
+      } else if (!sale.is_paid && wasPaid) {
+        sale.paid_date = null;
+      }
+      
       await sale.save({ transaction });
+      
+      // Handle income summary adjustments
+      const newSaleDate = new Date(sale.sale_date).toISOString().split('T')[0];
+      const isNowPaid = sale.is_paid;
+      
+      // If sale was paid before, remove old income from summaries
+      if (wasPaid) {
+        const oldOwnerIncomes = {};
+        for (const saleItem of oldSaleItems) {
+          if (!oldOwnerIncomes[saleItem.owner_id]) {
+            oldOwnerIncomes[saleItem.owner_id] = {
+              total_sales: 0,
+              total_profit: 0,
+              total_items_sold: 0
+            };
+          }
+          
+          const itemTotal = Number(saleItem.total_price);
+          const unitCost = Number(saleItem.inventoryItem.unit_price);
+          const income = (Number(saleItem.unit_price) - unitCost) * saleItem.quantity;
+          
+          oldOwnerIncomes[saleItem.owner_id].total_sales += itemTotal;
+          oldOwnerIncomes[saleItem.owner_id].total_profit += income;
+          oldOwnerIncomes[saleItem.owner_id].total_items_sold += saleItem.quantity;
+        }
+        
+        // Decrement old income summaries
+        for (const [ownerId, incomeData] of Object.entries(oldOwnerIncomes)) {
+          const summary = await IncomeSummary.findOne({
+            where: { owner_id: ownerId, date: oldSaleDate },
+            transaction
+          });
+          
+          if (summary) {
+            await summary.decrement({
+              total_sales: incomeData.total_sales,
+              total_profit: incomeData.total_profit,
+              total_items_sold: incomeData.total_items_sold
+            }, { transaction });
+          }
+        }
+      }
+      
+      // If sale is now paid, add new income to summaries
+      if (isNowPaid) {
+        const newOwnerIncomes = {};
+        for (const saleItemData of saleItemsData) {
+          if (!newOwnerIncomes[saleItemData.owner_id]) {
+            newOwnerIncomes[saleItemData.owner_id] = {
+              total_sales: 0,
+              total_profit: 0,
+              total_items_sold: 0
+            };
+          }
+          
+          const itemTotal = Number(saleItemData.total_price);
+          const unitCost = Number(saleItemData.inventoryItem.unit_price);
+          const income = (Number(saleItemData.unit_price) - unitCost) * saleItemData.quantity;
+          
+          newOwnerIncomes[saleItemData.owner_id].total_sales += itemTotal;
+          newOwnerIncomes[saleItemData.owner_id].total_profit += income;
+          newOwnerIncomes[saleItemData.owner_id].total_items_sold += saleItemData.quantity;
+        }
+        
+        // Increment new income summaries
+        for (const [ownerId, incomeData] of Object.entries(newOwnerIncomes)) {
+          const [summary, created] = await IncomeSummary.findOrCreate({
+            where: { owner_id: ownerId, date: newSaleDate },
+            defaults: {
+              owner_id: ownerId,
+              date: newSaleDate,
+              total_sales: incomeData.total_sales,
+              total_profit: incomeData.total_profit,
+              total_items_sold: incomeData.total_items_sold
+            },
+            transaction
+          });
+          
+          if (!created) {
+            await summary.increment({
+              total_sales: incomeData.total_sales,
+              total_profit: incomeData.total_profit,
+              total_items_sold: incomeData.total_items_sold
+            }, { transaction });
+          }
+        }
+      }
       
       // Create new sale items and update inventory
       for (const saleItemData of saleItemsData) {
