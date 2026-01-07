@@ -32,8 +32,9 @@ const validateOwnerLogin = (req, res, next) => {
 const validateInventoryItem = (req, res, next) => {
   const schema = Joi.object({
     name: Joi.string().min(1).max(200).required(),
-    description: Joi.string().optional(),
-    category: Joi.string().max(100).optional(),
+    description: Joi.string().optional().allow('', null),
+    category: Joi.string().max(100).optional().allow('', null),
+    unit: Joi.string().max(50).optional().allow('', null),
     unit_type: Joi.string().max(50).optional(),
     quantity: Joi.number().integer().min(0).required(),
     unit_price: Joi.number().positive().required(),

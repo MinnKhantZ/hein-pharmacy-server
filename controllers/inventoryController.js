@@ -125,7 +125,7 @@ class InventoryController {
   static async createItem(req, res) {
     try {
       const {
-        name, description, category, unit_type, quantity,
+        name, description, category, unit, unit_type, quantity,
         unit_price, selling_price, minimum_stock, barcode,
         expiry_date, supplier, owner_id
       } = req.body;
@@ -140,11 +140,11 @@ class InventoryController {
 
       const result = await pool.query(
         `INSERT INTO inventory_items 
-         (name, description, owner_id, category, unit_type, quantity, 
+         (name, description, owner_id, category, unit, unit_type, quantity, 
           unit_price, selling_price, minimum_stock, barcode, expiry_date, supplier, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
          RETURNING *`,
-        [name, description, finalOwnerId, category, unit_type, quantity,
+        [name, description, finalOwnerId, category, unit || 'unit', unit_type, quantity,
          unit_price, selling_price, minimum_stock, barcode, expiry_date, supplier]
       );
 
@@ -166,7 +166,7 @@ class InventoryController {
     try {
       const { id } = req.params;
       const {
-        name, description, category, unit_type, quantity,
+        name, description, category, unit, unit_type, quantity,
         unit_price, selling_price, minimum_stock, barcode,
         expiry_date, supplier, owner_id
       } = req.body;
@@ -188,26 +188,27 @@ class InventoryController {
          SET name = COALESCE($1, name),
              description = COALESCE($2, description),
              category = COALESCE($3, category),
-             unit_type = COALESCE($4, unit_type),
-             quantity = COALESCE($5, quantity),
-             unit_price = COALESCE($6, unit_price),
-             selling_price = COALESCE($7, selling_price),
-             minimum_stock = COALESCE($8, minimum_stock),
-             barcode = COALESCE($9, barcode),
-             expiry_date = COALESCE($10, expiry_date),
-             supplier = COALESCE($11, supplier),
+             unit = COALESCE($4, unit),
+             unit_type = COALESCE($5, unit_type),
+             quantity = COALESCE($6, quantity),
+             unit_price = COALESCE($7, unit_price),
+             selling_price = COALESCE($8, selling_price),
+             minimum_stock = COALESCE($9, minimum_stock),
+             barcode = COALESCE($10, barcode),
+             expiry_date = COALESCE($11, expiry_date),
+             supplier = COALESCE($12, supplier),
              updated_at = NOW()`;
       
-      let params = [name, description, category, unit_type, quantity,
+      let params = [name, description, category, unit, unit_type, quantity,
          unit_price, selling_price, minimum_stock, barcode,
          expiry_date, supplier];
       
       // Admin can change owner_id
       if (req.user.username === 'admin' && owner_id !== undefined) {
-        query += `, owner_id = $12 WHERE id = $13 AND is_active = true RETURNING *`;
+        query += `, owner_id = $13 WHERE id = $14 AND is_active = true RETURNING *`;
         params.push(owner_id, id);
       } else {
-        query += ` WHERE id = $12 AND is_active = true RETURNING *`;
+        query += ` WHERE id = $13 AND is_active = true RETURNING *`;
         params.push(id);
       }
 

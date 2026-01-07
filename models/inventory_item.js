@@ -21,6 +21,11 @@ InventoryItem.init({
     references: { model: 'owners', key: 'id' },
   },
   category: DataTypes.STRING(100),
+  unit: {
+    type: DataTypes.STRING(50),
+    defaultValue: 'unit',
+    allowNull: false,
+  },
   unit_type: {
     type: DataTypes.STRING(50),
     defaultValue: 'pieces',
