@@ -21,7 +21,61 @@ class DeviceController {
         return res.status(400).json({ error: 'Push token is required' });
       }
 
-      // Register or update device
+      // Prefer identifying device by (owner_id + device_id) so re-installs (new push token)
+      // won't create duplicate device rows.
+      if (device_id) {
+        const existing = await pool.query(
+          `SELECT id, push_token
+           FROM devices
+           WHERE owner_id = $1 AND device_id = $2
+           ORDER BY updated_at DESC
+           LIMIT 1`,
+          [owner_id, device_id]
+        );
+
+        if (existing.rowCount > 0) {
+          const existingId = existing.rows[0].id;
+
+          // If the token is being changed, ensure the new token isn't already in use by another record.
+          // This avoids the "duplicate key value violates unique constraint" error.
+          await pool.query(
+            `DELETE FROM devices 
+             WHERE push_token = $1 AND id <> $2`,
+            [push_token, existingId]
+          );
+
+          const updated = await pool.query(
+            `UPDATE devices
+             SET push_token = $1,
+                 device_model = COALESCE($2, device_model),
+                 low_stock_alerts = COALESCE($3, low_stock_alerts),
+                 sales_notifications = COALESCE($4, sales_notifications),
+                 low_stock_alert_time = COALESCE($5, low_stock_alert_time),
+                 last_active = CURRENT_TIMESTAMP,
+                 is_active = true,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = $6 AND owner_id = $7
+             RETURNING id, push_token, low_stock_alerts, sales_notifications, low_stock_alert_time`,
+            [push_token, device_model, low_stock_alerts, sales_notifications, low_stock_alert_time, existingId, owner_id]
+          );
+
+          // If there are legacy duplicates for the same device_id, deactivate them.
+          await pool.query(
+            `UPDATE devices
+             SET is_active = false, updated_at = CURRENT_TIMESTAMP
+             WHERE owner_id = $1 AND device_id = $2 AND id <> $3`,
+            [owner_id, device_id, existingId]
+          );
+
+          console.log(`✅ Device updated by device_id for owner ${owner_id}: ${device_id}`);
+          return res.json({
+            message: 'Device registered successfully',
+            device: updated.rows[0],
+          });
+        }
+      }
+
+      // Fallback: Register or update device by push_token uniqueness
       const result = await pool.query(
         `INSERT INTO devices (
           owner_id, push_token, device_id, device_model, 
@@ -177,6 +231,104 @@ class DeviceController {
     } catch (error) {
       console.error('Update preferences error:', error);
       res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  /**
+   * Get print layout configuration for a device
+   * Query params: push_token
+   */
+  static async getPrintLayoutConfig(req, res) {
+    try {
+      const { push_token, device_id } = req.query;
+      const owner_id = req.user.id;
+
+      if (!push_token && !device_id) {
+        return res.status(400).json({ error: 'push_token or device_id is required' });
+      }
+
+      let result;
+      if (device_id) {
+        result = await pool.query(
+          `SELECT id, push_token, device_id, print_layout_config
+           FROM devices
+           WHERE device_id = $1 AND owner_id = $2
+           ORDER BY updated_at DESC
+           LIMIT 1`,
+          [device_id, owner_id]
+        );
+      } else {
+        result = await pool.query(
+          `SELECT id, push_token, device_id, print_layout_config
+           FROM devices
+           WHERE push_token = $1 AND owner_id = $2
+           LIMIT 1`,
+          [push_token, owner_id]
+        );
+      }
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({ error: 'Device not found' });
+      }
+
+      return res.json({
+        device: result.rows[0],
+      });
+    } catch (error) {
+      console.error('Get print layout config error:', error);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  /**
+   * Update print layout configuration for a device
+   * Body: { push_token, print_layout_config }
+   */
+  static async updatePrintLayoutConfig(req, res) {
+    try {
+      const { push_token, device_id, print_layout_config } = req.body;
+      const owner_id = req.user.id;
+
+      if (!push_token && !device_id) {
+        return res.status(400).json({ error: 'push_token or device_id is required' });
+      }
+
+      if (typeof print_layout_config !== 'object' || print_layout_config === null) {
+        return res.status(400).json({ error: 'print_layout_config must be an object' });
+      }
+
+      let result;
+      if (device_id) {
+        result = await pool.query(
+          `UPDATE devices
+           SET print_layout_config = $1::jsonb,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE device_id = $2 AND owner_id = $3
+           RETURNING id, push_token, device_id, print_layout_config`,
+          [JSON.stringify(print_layout_config), device_id, owner_id]
+        );
+      } else {
+        result = await pool.query(
+          `UPDATE devices
+           SET print_layout_config = $1::jsonb,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE push_token = $2 AND owner_id = $3
+           RETURNING id, push_token, device_id, print_layout_config`,
+          [JSON.stringify(print_layout_config), push_token, owner_id]
+        );
+      }
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({ error: 'Device not found' });
+      }
+
+      return res.json({
+        message: 'Print layout configuration updated successfully',
+        device: result.rows[0],
+      });
+    } catch (error) {
+      console.error('Update print layout config error:', error);
+      return res.status(500).json({ error: 'Internal server error' });
     }
   }
 

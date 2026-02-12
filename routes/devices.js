@@ -22,6 +22,10 @@ router.get('/all', DeviceController.getAllDevices);
 // Update notification preferences
 router.put('/preferences', DeviceController.updateNotificationPreferences);
 
+// Print layout config (per device)
+router.get('/print-layout', DeviceController.getPrintLayoutConfig);
+router.put('/print-layout', DeviceController.updatePrintLayoutConfig);
+
 // Test notification
 router.post('/test-notification', DeviceController.testNotification);
 

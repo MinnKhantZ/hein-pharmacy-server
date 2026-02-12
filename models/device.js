@@ -47,6 +47,15 @@ const Device = sequelize.define('Device', {
     type: DataTypes.BOOLEAN,
     defaultValue: true,
   },
+  low_stock_alert_time: {
+    type: DataTypes.TIME,
+    allowNull: false,
+    defaultValue: '09:00:00',
+  },
+  print_layout_config: {
+    type: DataTypes.JSONB,
+    allowNull: true,
+  },
 }, {
   tableName: 'devices',
   timestamps: true,
