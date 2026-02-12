@@ -6,12 +6,12 @@ const pool = require('../config/database');
 class IncomeController {
   static async getIncomeSummary(req, res) {
     try {
-      const { period } = req.query;
+      const { period, page = 1, limit = 100, all = false } = req.query;
       
       const whereClause = {};
       
       // Calculate date range based on period
-      if (period) {
+      if (period && all !== 'true' && all !== true) {
         const now = new Date();
         let startDate;
         
@@ -36,7 +36,9 @@ class IncomeController {
         }
       }
 
-      const summaries = await IncomeSummary.findAll({
+      const offset = (parseInt(page) - 1) * parseInt(limit);
+
+      const { count, rows: summaries } = await IncomeSummary.findAndCountAll({
         where: whereClause,
         include: [{
           model: Owner,
@@ -44,7 +46,8 @@ class IncomeController {
           attributes: ['id', 'full_name', 'username', 'email']
         }],
         order: [['date', 'DESC']],
-        limit: 100
+        limit: parseInt(limit),
+        offset: offset
       });
 
       const formattedSummaries = summaries.map(summary => ({
@@ -57,7 +60,15 @@ class IncomeController {
         item_count: summary.total_items_sold
       }));
 
-      res.json({ summaries: formattedSummaries });
+      res.json({ 
+        summaries: formattedSummaries,
+        pagination: {
+          total: count,
+          pages: Math.ceil(count / parseInt(limit)),
+          currentPage: parseInt(page),
+          limit: parseInt(limit)
+        }
+      });
     } catch (error) {
       console.error('Get income summary error:', error);
       res.status(500).json({ error: 'Internal server error' });
