@@ -41,7 +41,7 @@ const validateInventoryItem = (req, res, next) => {
     selling_price: Joi.number().positive().required(),
     minimum_stock: Joi.number().integer().min(0).optional(),
     barcode: Joi.string().max(100).optional(),
-    expiry_date: Joi.date().optional(),
+    expiry_date: Joi.date().iso().optional().allow('', null),
     supplier: Joi.string().max(200).optional(),
     owner_id: Joi.number().integer().positive().optional()
   });

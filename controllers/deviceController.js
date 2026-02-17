@@ -1,5 +1,4 @@
 const pool = require('../config/database');
-const Device = require('../models/device');
 
 class DeviceController {
   /**
@@ -13,7 +12,10 @@ class DeviceController {
         device_model,
         low_stock_alerts = true,
         sales_notifications = true,
-        low_stock_alert_time = '09:00:00'
+        low_stock_alert_time = '09:00:00',
+        expiry_alerts = true,
+        expiry_alert_days_before = 30,
+        expiry_alert_time = '09:00:00'
       } = req.body;
       const owner_id = req.user.id;
 
@@ -51,12 +53,27 @@ class DeviceController {
                  low_stock_alerts = COALESCE($3, low_stock_alerts),
                  sales_notifications = COALESCE($4, sales_notifications),
                  low_stock_alert_time = COALESCE($5, low_stock_alert_time),
+                 expiry_alerts = COALESCE($6, expiry_alerts),
+                 expiry_alert_days_before = COALESCE($7, expiry_alert_days_before),
+                 expiry_alert_time = COALESCE($8, expiry_alert_time),
                  last_active = CURRENT_TIMESTAMP,
                  is_active = true,
                  updated_at = CURRENT_TIMESTAMP
-             WHERE id = $6 AND owner_id = $7
-             RETURNING id, push_token, low_stock_alerts, sales_notifications, low_stock_alert_time`,
-            [push_token, device_model, low_stock_alerts, sales_notifications, low_stock_alert_time, existingId, owner_id]
+             WHERE id = $9 AND owner_id = $10
+             RETURNING id, push_token, low_stock_alerts, sales_notifications, low_stock_alert_time,
+                       expiry_alerts, expiry_alert_days_before, expiry_alert_time`,
+            [
+              push_token,
+              device_model,
+              low_stock_alerts,
+              sales_notifications,
+              low_stock_alert_time,
+              expiry_alerts,
+              expiry_alert_days_before,
+              expiry_alert_time,
+              existingId,
+              owner_id,
+            ]
           );
 
           // If there are legacy duplicates for the same device_id, deactivate them.
@@ -80,9 +97,10 @@ class DeviceController {
         `INSERT INTO devices (
           owner_id, push_token, device_id, device_model, 
           low_stock_alerts, sales_notifications, low_stock_alert_time,
+          expiry_alerts, expiry_alert_days_before, expiry_alert_time,
           last_active, created_at, updated_at
         ) 
-         VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
          ON CONFLICT (push_token) 
          DO UPDATE SET 
            owner_id = EXCLUDED.owner_id,
@@ -91,11 +109,26 @@ class DeviceController {
            low_stock_alerts = EXCLUDED.low_stock_alerts,
            sales_notifications = EXCLUDED.sales_notifications,
            low_stock_alert_time = EXCLUDED.low_stock_alert_time,
+           expiry_alerts = EXCLUDED.expiry_alerts,
+           expiry_alert_days_before = EXCLUDED.expiry_alert_days_before,
+           expiry_alert_time = EXCLUDED.expiry_alert_time,
            last_active = CURRENT_TIMESTAMP,
            is_active = true,
            updated_at = CURRENT_TIMESTAMP
-         RETURNING id, push_token, low_stock_alerts, sales_notifications, low_stock_alert_time`,
-        [owner_id, push_token, device_id, device_model, low_stock_alerts, sales_notifications, low_stock_alert_time]
+         RETURNING id, push_token, low_stock_alerts, sales_notifications, low_stock_alert_time,
+                   expiry_alerts, expiry_alert_days_before, expiry_alert_time`,
+        [
+          owner_id,
+          push_token,
+          device_id,
+          device_model,
+          low_stock_alerts,
+          sales_notifications,
+          low_stock_alert_time,
+          expiry_alerts,
+          expiry_alert_days_before,
+          expiry_alert_time,
+        ]
       );
 
       console.log(`✅ Device registered for owner ${owner_id}: ${push_token}`);
@@ -151,7 +184,8 @@ class DeviceController {
 
       const result = await pool.query(
         `SELECT id, push_token, device_id, device_model, is_active, 
-                low_stock_alerts, sales_notifications,
+          low_stock_alerts, sales_notifications, low_stock_alert_time,
+          expiry_alerts, expiry_alert_days_before, expiry_alert_time,
                 last_active, created_at, updated_at
          FROM devices 
          WHERE owner_id = $1
@@ -176,7 +210,8 @@ class DeviceController {
     try {
       const result = await pool.query(
         `SELECT d.id, d.push_token, d.device_id, d.device_model, d.is_active, 
-                d.low_stock_alerts, d.sales_notifications,
+          d.low_stock_alerts, d.sales_notifications, d.low_stock_alert_time,
+          d.expiry_alerts, d.expiry_alert_days_before, d.expiry_alert_time,
                 d.last_active, d.created_at, d.updated_at,
                 o.username, o.full_name
          FROM devices d
@@ -200,7 +235,15 @@ class DeviceController {
    */
   static async updateNotificationPreferences(req, res) {
     try {
-      const { push_token, low_stock_alerts, sales_notifications, low_stock_alert_time } = req.body;
+      const {
+        push_token,
+        low_stock_alerts,
+        sales_notifications,
+        low_stock_alert_time,
+        expiry_alerts,
+        expiry_alert_days_before,
+        expiry_alert_time,
+      } = req.body;
       const owner_id = req.user.id;
 
       if (!push_token) {
@@ -212,10 +255,23 @@ class DeviceController {
          SET low_stock_alerts = COALESCE($1, low_stock_alerts),
              sales_notifications = COALESCE($2, sales_notifications),
              low_stock_alert_time = COALESCE($3, low_stock_alert_time),
+             expiry_alerts = COALESCE($4, expiry_alerts),
+             expiry_alert_days_before = COALESCE($5, expiry_alert_days_before),
+             expiry_alert_time = COALESCE($6, expiry_alert_time),
              updated_at = CURRENT_TIMESTAMP
-         WHERE push_token = $4 AND owner_id = $5
-         RETURNING id, push_token, low_stock_alerts, sales_notifications, low_stock_alert_time`,
-        [low_stock_alerts, sales_notifications, low_stock_alert_time, push_token, owner_id]
+         WHERE push_token = $7 AND owner_id = $8
+         RETURNING id, push_token, low_stock_alerts, sales_notifications, low_stock_alert_time,
+                   expiry_alerts, expiry_alert_days_before, expiry_alert_time`,
+        [
+          low_stock_alerts,
+          sales_notifications,
+          low_stock_alert_time,
+          expiry_alerts,
+          expiry_alert_days_before,
+          expiry_alert_time,
+          push_token,
+          owner_id,
+        ]
       );
 
       if (result.rowCount === 0) {

@@ -24,7 +24,7 @@ class NotificationService {
       return { success: false, message: 'No push tokens' };
     }
 
-    const { title, body, data = {} } = notification;
+    const { title, body, data = {}, android = {}, ios = {} } = notification;
 
     // Filter valid Expo push tokens
     const validTokens = pushTokens.filter(token => 
@@ -45,6 +45,12 @@ class NotificationService {
       data,
       priority: 'high',
       channelId: 'default',
+      android: {
+        ...android,
+      },
+      ios: {
+        ...ios,
+      },
     }));
 
     try {
@@ -93,6 +99,12 @@ class NotificationService {
         current_quantity: item.current_quantity,
         minimum_stock: item.minimum_stock,
       },
+      android: {
+        tag: `low_stock_${item.id}`,
+      },
+      ios: {
+        threadId: 'low_stock_alerts',
+      },
     });
     
     if (result.success) {
@@ -128,6 +140,90 @@ class NotificationService {
       console.error(`❌ Sales notification failed:`, result.error);
     }
     
+    return result;
+  }
+
+  /**
+   * Send expiring items notification
+   * @param {Array<string>} pushTokens - Array of device push tokens
+   * @param {Array<Object>} items - Expiring inventory items {id, name, expiry_date}
+   * @param {number} daysBefore - User-configured days-before-expiry window
+   */
+  async sendExpiryWindowAlert(pushTokens, items, daysBefore) {
+    const safeItems = Array.isArray(items) ? items : [];
+
+    if (safeItems.length === 0) {
+      return { success: true, message: 'No expiring items to notify' };
+    }
+
+    const previewNames = safeItems.slice(0, 3).map((item) => item.name).join(', ');
+    const moreCount = Math.max(0, safeItems.length - 3);
+    const suffix = moreCount > 0 ? ` and ${moreCount} more` : '';
+
+    const result = await this.sendPushNotifications(pushTokens, {
+      title: '⏰ Expiration Alert',
+      body: `${safeItems.length} item(s) expire within ${daysBefore} day(s): ${previewNames}${suffix}`,
+      data: {
+        type: 'expiry_window',
+        days_before: daysBefore,
+        item_count: safeItems.length,
+        item_ids: safeItems.map((item) => item.id),
+      },
+    });
+
+    if (result.success) {
+      console.log(`✅ Expiration alert sent successfully (${safeItems.length} item(s))`);
+    } else {
+      console.error('❌ Expiration alert failed:', result.error);
+    }
+
+    return result;
+  }
+
+  /**
+   * Send single item expiration alert
+   * @param {Array<string>} pushTokens - Array of device push tokens
+   * @param {Object} item - Expiring item {id, name, expiry_date}
+   * @param {number} daysUntil - Days until expiry
+   */
+  async sendSingleExpiryAlert(pushTokens, item, daysUntil) {
+    if (!item) return { success: false, message: 'No item provided' };
+
+    // Ensure date is only YYYY-MM-DD
+    let dateStr = item.expiry_date || 'N/A';
+    if (typeof dateStr === 'object' && dateStr instanceof Date) {
+      dateStr = dateStr.toISOString().split('T')[0];
+    } else if (typeof dateStr === 'string' && dateStr.includes(' ')) {
+      // Handle cases like "2026-02-16 00:00:00+00"
+      dateStr = dateStr.split(' ')[0];
+    } else if (typeof dateStr === 'string' && dateStr.includes('T')) {
+      dateStr = dateStr.split('T')[0];
+    }
+
+    const result = await this.sendPushNotifications(pushTokens, {
+      title: '⏰ Item Expiring Soon',
+      body: `${item.name} will expire in ${daysUntil} day(s) (${dateStr})!`,
+      data: {
+        type: 'expiry_window',
+        item_id: item.id,
+        item_name: item.name,
+        expiry_date: dateStr,
+        days_until: daysUntil,
+      },
+      android: {
+        tag: `expiry_${item.id}`,
+      },
+      ios: {
+        threadId: 'expiry_alerts',
+      },
+    });
+
+    if (result.success) {
+      console.log(`✅ Single expiry alert sent for: ${item.name}`);
+    } else {
+      console.error(`❌ Single expiry alert failed for ${item.name}:`, result.error);
+    }
+
     return result;
   }
 }

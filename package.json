@@ -5,6 +5,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
+    "lint": "eslint .",
     "db:status": "npx sequelize-cli db:migrate:status",
     "db:migrate": "npx sequelize-cli db:migrate",
     "db:migrate:undo": "npx sequelize-cli db:migrate:undo",
@@ -45,6 +46,10 @@
     "sequelize": "^6.37.7"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.0.0",
+    "eslint-plugin-security": "^3.0.1",
+    "globals": "^17.3.0",
     "nodemon": "^3.0.2",
     "sequelize-cli": "^6.6.2"
   }

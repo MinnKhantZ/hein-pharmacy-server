@@ -1,6 +1,15 @@
 const pool = require('../config/database');
 
 class InventoryController {
+  static getDatabaseErrorCode(error) {
+    return error?.parent?.code || error?.original?.code || error?.code;
+  }
+
+  static isRetryableDatabaseError(error) {
+    const code = InventoryController.getDatabaseErrorCode(error);
+    return code === '40P01' || code === '40001' || code === '55P03';
+  }
+
   static async getItems(req, res) {
     try {
       const { page = 1, limit = 20, search, category, owner_id, sortBy = 'created_at', sortOrder = 'DESC' } = req.query;
@@ -12,7 +21,7 @@ class InventoryController {
         JOIN owners o ON i.owner_id = o.id
         WHERE i.is_active = true
       `;
-      let params = [];
+      const params = [];
       let paramCount = 0;
 
       // Everyone can see all items (no admin restriction)
@@ -38,12 +47,16 @@ class InventoryController {
       }
 
       // Sorting - validate and sanitize sort parameters
-      const validSortFields = ['name', 'quantity', 'unit_price', 'selling_price', 'created_at', 'category'];
+      const validSortFields = ['name', 'quantity', 'unit_price', 'selling_price', 'created_at', 'category', 'expiry_date'];
       const validSortOrders = ['ASC', 'DESC'];
       const sortField = validSortFields.includes(sortBy) ? sortBy : 'created_at';
       const sortDirection = validSortOrders.includes(sortOrder.toUpperCase()) ? sortOrder.toUpperCase() : 'DESC';
 
-      query += ` ORDER BY i.${sortField} ${sortDirection} LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`;
+      if (sortField === 'expiry_date') {
+        query += ` ORDER BY i.expiry_date IS NULL ASC, i.expiry_date ${sortDirection} LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`;
+      } else {
+        query += ` ORDER BY i.${sortField} ${sortDirection} LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`;
+      }
       params.push(limit, offset);
 
       const result = await pool.query(query, params);
@@ -52,7 +65,7 @@ class InventoryController {
       let countQuery = `
         SELECT COUNT(*) FROM inventory_items i WHERE i.is_active = true
       `;
-      let countParams = [];
+      const countParams = [];
       let countParamCount = 0;
 
       // Everyone can see all items (no admin restriction)
@@ -101,7 +114,7 @@ class InventoryController {
         JOIN owners o ON i.owner_id = o.id
         WHERE i.id = $1 AND i.is_active = true
       `;
-      let params = [id];
+      const params = [id];
 
       // Non-admin users can only see their own items
       if (req.user.username !== 'admin') {
@@ -156,6 +169,8 @@ class InventoryController {
       console.error('Create item error:', error);
       if (error.code === '23505') { // Unique constraint violation
         res.status(400).json({ error: 'Barcode already exists' });
+      } else if (InventoryController.isRetryableDatabaseError(error)) {
+        res.status(409).json({ error: 'Request conflicted with another update. Please retry.' });
       } else {
         res.status(500).json({ error: 'Internal server error' });
       }
@@ -170,6 +185,8 @@ class InventoryController {
         unit_price, selling_price, minimum_stock, barcode,
         expiry_date, supplier, owner_id
       } = req.body;
+
+      const hasExpiryDateField = Object.prototype.hasOwnProperty.call(req.body, 'expiry_date');
 
       // Check if item belongs to user (non-admin)
       if (req.user.username !== 'admin') {
@@ -195,20 +212,20 @@ class InventoryController {
              selling_price = COALESCE($8, selling_price),
              minimum_stock = COALESCE($9, minimum_stock),
              barcode = COALESCE($10, barcode),
-             expiry_date = COALESCE($11, expiry_date),
+             expiry_date = CASE WHEN $13::boolean THEN $11::date ELSE expiry_date END,
              supplier = COALESCE($12, supplier),
              updated_at = NOW()`;
       
-      let params = [name, description, category, unit, unit_type, quantity,
+      const params = [name, description, category, unit, unit_type, quantity,
          unit_price, selling_price, minimum_stock, barcode,
-         expiry_date, supplier];
+        expiry_date || null, supplier, hasExpiryDateField];
       
       // Admin can change owner_id
       if (req.user.username === 'admin' && owner_id !== undefined) {
-        query += `, owner_id = $13 WHERE id = $14 AND is_active = true RETURNING *`;
+        query += `, owner_id = $14 WHERE id = $15 AND is_active = true RETURNING *`;
         params.push(owner_id, id);
       } else {
-        query += ` WHERE id = $13 AND is_active = true RETURNING *`;
+        query += ` WHERE id = $14 AND is_active = true RETURNING *`;
         params.push(id);
       }
 
@@ -224,6 +241,9 @@ class InventoryController {
       });
     } catch (error) {
       console.error('Update item error:', error);
+      if (InventoryController.isRetryableDatabaseError(error)) {
+        return res.status(409).json({ error: 'Request conflicted with another update. Please retry.' });
+      }
       res.status(500).json({ error: 'Internal server error' });
     }
   }
@@ -256,6 +276,9 @@ class InventoryController {
       res.json({ message: 'Item deleted successfully' });
     } catch (error) {
       console.error('Delete item error:', error);
+      if (InventoryController.isRetryableDatabaseError(error)) {
+        return res.status(409).json({ error: 'Request conflicted with another update. Please retry.' });
+      }
       res.status(500).json({ error: 'Internal server error' });
     }
   }
@@ -268,7 +291,7 @@ class InventoryController {
         JOIN owners o ON i.owner_id = o.id
         WHERE i.is_active = true AND i.quantity <= i.minimum_stock
       `;
-      let params = [];
+      const params = [];
 
       // Filter by owner if not admin
       if (req.user.username !== 'admin') {
@@ -290,7 +313,7 @@ class InventoryController {
   static async getCategories(req, res) {
     try {
       // Everyone can see all categories (no admin restriction)
-      let query = `
+      const query = `
         SELECT DISTINCT category 
         FROM inventory_items 
         WHERE is_active = true AND category IS NOT NULL AND category != ''
@@ -309,7 +332,7 @@ class InventoryController {
   static async getOwners(req, res) {
     try {
       // Everyone can see all owners (no admin restriction)
-      let query = `
+      const query = `
         SELECT id, username, full_name
         FROM owners 
         WHERE is_active = true

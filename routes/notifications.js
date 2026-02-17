@@ -31,6 +31,32 @@ router.post('/cron/low-stock', authenticateCron, async (req, res) => {
 });
 
 /**
+ * POST /api/notifications/cron/expiry
+ * Endpoint to be called by external cron service to trigger expiry notifications
+ * Requires X-Cron-Api-Key header for authentication
+ */
+router.post('/cron/expiry', authenticateCron, async (req, res) => {
+  try {
+    console.log('⏰ Expiry notification cron endpoint called');
+
+    await cronService.checkAndNotifyExpiryPerDevice();
+
+    res.json({
+      success: true,
+      message: 'Expiry notifications processed successfully',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('❌ Error processing expiry notifications:', error);
+    res.status(500).json({
+      error: 'Failed to process expiry notifications',
+      message: error.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+/**
  * GET /api/notifications/health
  * Health check endpoint for the notifications service (no auth required)
  */

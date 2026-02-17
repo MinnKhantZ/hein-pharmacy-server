@@ -6,6 +6,46 @@ const sequelize = require('../models/index');
 const pool = require('../config/database');
 
 class SalesController {
+  static aggregateQuantitiesByInventoryItem(items) {
+    const quantityByItem = new Map();
+
+    for (const item of items) {
+      const inventoryItemId = Number(item.inventory_item_id);
+      const currentQuantity = quantityByItem.get(inventoryItemId) || 0;
+      quantityByItem.set(inventoryItemId, currentQuantity + Number(item.quantity));
+    }
+
+    return quantityByItem;
+  }
+
+  static getSortedOwnerIncomeEntries(ownerIncomes) {
+    return Object.entries(ownerIncomes).sort((a, b) => Number(a[0]) - Number(b[0]));
+  }
+
+  static async getLockedInventoryItemsById(inventoryItemIds, transaction) {
+    if (!inventoryItemIds || inventoryItemIds.length === 0) {
+      return new Map();
+    }
+
+    const lockedInventoryItems = await InventoryItem.findAll({
+      where: { id: inventoryItemIds },
+      order: [['id', 'ASC']],
+      transaction,
+      lock: transaction.LOCK.UPDATE
+    });
+
+    return new Map(lockedInventoryItems.map(item => [Number(item.id), item]));
+  }
+
+  static getTransactionErrorCode(error) {
+    return error?.parent?.code || error?.original?.code || error?.code;
+  }
+
+  static isRetryableTransactionError(error) {
+    const code = SalesController.getTransactionErrorCode(error);
+    return code === '40P01' || code === '40001' || code === '55P03';
+  }
+
   static async createSale(req, res) {
     const transaction = await sequelize.transaction();
     
@@ -18,41 +58,48 @@ class SalesController {
 
       let totalAmount = 0;
       const saleItemsData = [];
-      
-      // Validate items and calculate total
-      for (const item of items) {
-        const inventoryItem = await InventoryItem.findOne({
-          where: { id: item.inventory_item_id, is_active: true },
-          transaction
-        });
-        
-        if (!inventoryItem) {
+      const requestedQuantityByItem = SalesController.aggregateQuantitiesByInventoryItem(items);
+      const requestedInventoryItemIds = [...requestedQuantityByItem.keys()].sort((a, b) => a - b);
+
+      const lockedInventoryItemsById = await SalesController.getLockedInventoryItemsById(requestedInventoryItemIds, transaction);
+
+      // Validate locked inventory items first (prevents race conditions and deadlocks)
+      for (const inventoryItemId of requestedInventoryItemIds) {
+        const inventoryItem = lockedInventoryItemsById.get(inventoryItemId);
+        const requestedQuantity = requestedQuantityByItem.get(inventoryItemId);
+
+        if (!inventoryItem || !inventoryItem.is_active) {
           await transaction.rollback();
-          return res.status(400).json({ error: `Item with ID ${item.inventory_item_id} not found` });
+          return res.status(400).json({ error: `Item with ID ${inventoryItemId} not found` });
         }
-        
-        if (inventoryItem.quantity < item.quantity) {
+
+        if (Number(inventoryItem.quantity) < requestedQuantity) {
           await transaction.rollback();
-          return res.status(400).json({ 
-            error: `Insufficient stock for ${inventoryItem.name}. Available: ${inventoryItem.quantity}, Requested: ${item.quantity}` 
+          return res.status(400).json({
+            error: `Insufficient stock for ${inventoryItem.name}. Available: ${inventoryItem.quantity}, Requested: ${requestedQuantity}`
           });
         }
-        
-        const itemTotal = Number(inventoryItem.selling_price) * item.quantity;
+      }
+
+      // Calculate totals using the locked rows
+      for (const item of items) {
+        const inventoryItem = lockedInventoryItemsById.get(Number(item.inventory_item_id));
+
+        const itemTotal = Number(inventoryItem.selling_price) * Number(item.quantity);
         const unitCost = Number(inventoryItem.unit_price);
-        const income = (Number(inventoryItem.selling_price) - unitCost) * item.quantity;
-        
+        const income = (Number(inventoryItem.selling_price) - unitCost) * Number(item.quantity);
+
         totalAmount += itemTotal;
-        
+
         saleItemsData.push({
-          inventory_item_id: item.inventory_item_id,
-          quantity: item.quantity,
+          inventory_item_id: Number(item.inventory_item_id),
+          quantity: Number(item.quantity),
           unit_price: inventoryItem.selling_price,
           total_price: itemTotal,
           owner_id: inventoryItem.owner_id,
           item_cost: unitCost,
-          income: income,
-          inventoryItem: inventoryItem
+          income,
+          inventoryItem
         });
       }
       
@@ -80,11 +127,16 @@ class SalesController {
           total_price: saleItemData.total_price,
           owner_id: saleItemData.owner_id
         }, { transaction });
-        
-        // Update inventory quantity
-        await saleItemData.inventoryItem.decrement('quantity', { 
-          by: saleItemData.quantity,
-          transaction 
+      }
+
+      // Update inventory quantity in deterministic order to avoid deadlocks
+      for (const inventoryItemId of requestedInventoryItemIds) {
+        const inventoryItem = lockedInventoryItemsById.get(inventoryItemId);
+        const requestedQuantity = requestedQuantityByItem.get(inventoryItemId);
+
+        await inventoryItem.decrement('quantity', {
+          by: requestedQuantity,
+          transaction
         });
       }
       
@@ -106,7 +158,7 @@ class SalesController {
       // Update income summaries ONLY if the sale is paid (not credit or already paid)
       if (isPaid) {
         const today = new Date().toISOString().split('T')[0];
-        for (const [ownerId, incomeData] of Object.entries(ownerIncomes)) {
+        for (const [ownerId, incomeData] of SalesController.getSortedOwnerIncomeEntries(ownerIncomes)) {
           const [summary, created] = await IncomeSummary.findOrCreate({
             where: { owner_id: ownerId, date: today },
             defaults: {
@@ -193,6 +245,9 @@ class SalesController {
         await transaction.rollback();
       }
       console.error('Create sale error:', error);
+      if (SalesController.isRetryableTransactionError(error)) {
+        return res.status(409).json({ error: 'Request conflicted with another update. Please retry.' });
+      }
       res.status(500).json({ error: 'Internal server error' });
     }
   }
@@ -451,7 +506,7 @@ class SalesController {
       }
       
       // Update income summaries for the ORIGINAL sale date (not today)
-      for (const [ownerId, incomeData] of Object.entries(ownerIncomes)) {
+      for (const [ownerId, incomeData] of SalesController.getSortedOwnerIncomeEntries(ownerIncomes)) {
         const [summary, created] = await IncomeSummary.findOrCreate({
           where: { owner_id: ownerId, date: saleDate },
           defaults: {
@@ -491,6 +546,9 @@ class SalesController {
         await transaction.rollback();
       }
       console.error('Mark as paid error:', error);
+      if (SalesController.isRetryableTransactionError(error)) {
+        return res.status(409).json({ error: 'Request conflicted with another update. Please retry.' });
+      }
       res.status(500).json({ error: 'Internal server error' });
     }
   }
@@ -523,13 +581,38 @@ class SalesController {
         }],
         transaction
       });
-      
-      // Restore inventory for old items
-      for (const saleItem of oldSaleItems) {
-        await saleItem.inventoryItem.increment('quantity', {
-          by: saleItem.quantity,
-          transaction
-        });
+
+      const oldQuantityByItem = SalesController.aggregateQuantitiesByInventoryItem(oldSaleItems.map(saleItem => ({
+        inventory_item_id: saleItem.inventory_item_id,
+        quantity: saleItem.quantity
+      })));
+
+      const newQuantityByItem = SalesController.aggregateQuantitiesByInventoryItem(items);
+      const allInventoryItemIds = [...new Set([
+        ...oldQuantityByItem.keys(),
+        ...newQuantityByItem.keys()
+      ])].sort((a, b) => a - b);
+
+      const lockedInventoryItemsById = await SalesController.getLockedInventoryItemsById(allInventoryItemIds, transaction);
+
+      // Validate new items using effective quantity after reverting old sale quantities
+      for (const inventoryItemId of newQuantityByItem.keys()) {
+        const inventoryItem = lockedInventoryItemsById.get(inventoryItemId);
+        const quantityFromOldSale = oldQuantityByItem.get(inventoryItemId) || 0;
+        const effectiveAvailableQuantity = Number(inventoryItem?.quantity || 0) + quantityFromOldSale;
+        const requestedQuantity = newQuantityByItem.get(inventoryItemId);
+
+        if (!inventoryItem || !inventoryItem.is_active) {
+          await transaction.rollback();
+          return res.status(400).json({ error: `Item with ID ${inventoryItemId} not found` });
+        }
+
+        if (effectiveAvailableQuantity < requestedQuantity) {
+          await transaction.rollback();
+          return res.status(400).json({
+            error: `Insufficient stock for ${inventoryItem.name}. Available: ${effectiveAvailableQuantity}, Requested: ${requestedQuantity}`
+          });
+        }
       }
       
       // Delete old sale items
@@ -538,34 +621,19 @@ class SalesController {
         transaction
       });
       
-      // Validate new items
+      // Build new sale item rows and totals using locked inventory snapshots
       let totalAmount = 0;
       const saleItemsData = [];
       
       for (const item of items) {
-        const inventoryItem = await InventoryItem.findOne({
-          where: { id: item.inventory_item_id, is_active: true },
-          transaction
-        });
-        
-        if (!inventoryItem) {
-          await transaction.rollback();
-          return res.status(400).json({ error: `Item with ID ${item.inventory_item_id} not found` });
-        }
-        
-        if (inventoryItem.quantity < item.quantity) {
-          await transaction.rollback();
-          return res.status(400).json({ 
-            error: `Insufficient stock for ${inventoryItem.name}. Available: ${inventoryItem.quantity}, Requested: ${item.quantity}` 
-          });
-        }
-        
-        const itemTotal = Number(inventoryItem.selling_price) * item.quantity;
+        const inventoryItem = lockedInventoryItemsById.get(Number(item.inventory_item_id));
+        const itemQuantity = Number(item.quantity);
+        const itemTotal = Number(inventoryItem.selling_price) * itemQuantity;
         totalAmount += itemTotal;
         
         saleItemsData.push({
-          inventory_item_id: item.inventory_item_id,
-          quantity: item.quantity,
+          inventory_item_id: Number(item.inventory_item_id),
+          quantity: itemQuantity,
           unit_price: inventoryItem.selling_price,
           total_price: itemTotal,
           owner_id: inventoryItem.owner_id,
@@ -617,7 +685,7 @@ class SalesController {
         }
         
         // Decrement old income summaries
-        for (const [ownerId, incomeData] of Object.entries(oldOwnerIncomes)) {
+        for (const [ownerId, incomeData] of SalesController.getSortedOwnerIncomeEntries(oldOwnerIncomes)) {
           const summary = await IncomeSummary.findOne({
             where: { owner_id: ownerId, date: oldSaleDate },
             transaction
@@ -655,7 +723,7 @@ class SalesController {
         }
         
         // Increment new income summaries
-        for (const [ownerId, incomeData] of Object.entries(newOwnerIncomes)) {
+        for (const [ownerId, incomeData] of SalesController.getSortedOwnerIncomeEntries(newOwnerIncomes)) {
           const [summary, created] = await IncomeSummary.findOrCreate({
             where: { owner_id: ownerId, date: newSaleDate },
             defaults: {
@@ -678,7 +746,7 @@ class SalesController {
         }
       }
       
-      // Create new sale items and update inventory
+      // Create new sale items
       for (const saleItemData of saleItemsData) {
         await SaleItem.create({
           sale_id: sale.id,
@@ -688,12 +756,28 @@ class SalesController {
           total_price: saleItemData.total_price,
           owner_id: saleItemData.owner_id
         }, { transaction });
-        
-        // Decrease inventory
-        await saleItemData.inventoryItem.decrement('quantity', {
-          by: saleItemData.quantity,
-          transaction
-        });
+      }
+
+      // Apply net inventory delta in deterministic order to avoid deadlocks
+      for (const inventoryItemId of allInventoryItemIds) {
+        const inventoryItem = lockedInventoryItemsById.get(inventoryItemId);
+        const oldQuantity = oldQuantityByItem.get(inventoryItemId) || 0;
+        const newQuantity = newQuantityByItem.get(inventoryItemId) || 0;
+        const netQuantityToRestore = oldQuantity - newQuantity;
+
+        if (netQuantityToRestore > 0) {
+          await inventoryItem.increment('quantity', {
+            by: netQuantityToRestore,
+            transaction
+          });
+        }
+
+        if (netQuantityToRestore < 0) {
+          await inventoryItem.decrement('quantity', {
+            by: Math.abs(netQuantityToRestore),
+            transaction
+          });
+        }
       }
       
       await transaction.commit();
@@ -721,6 +805,9 @@ class SalesController {
         await transaction.rollback();
       }
       console.error('Update sale error:', error);
+      if (SalesController.isRetryableTransactionError(error)) {
+        return res.status(409).json({ error: 'Request conflicted with another update. Please retry.' });
+      }
       res.status(500).json({ error: 'Internal server error' });
     }
   }
@@ -748,11 +835,26 @@ class SalesController {
         }],
         transaction
       });
+
+      const quantityByItem = SalesController.aggregateQuantitiesByInventoryItem(saleItems.map(saleItem => ({
+        inventory_item_id: saleItem.inventory_item_id,
+        quantity: saleItem.quantity
+      })));
+      const inventoryItemIds = [...quantityByItem.keys()].sort((a, b) => a - b);
+      const lockedInventoryItemsById = await SalesController.getLockedInventoryItemsById(inventoryItemIds, transaction);
       
       // Restore inventory
-      for (const saleItem of saleItems) {
-        await saleItem.inventoryItem.increment('quantity', {
-          by: saleItem.quantity,
+      for (const inventoryItemId of inventoryItemIds) {
+        const inventoryItem = lockedInventoryItemsById.get(inventoryItemId);
+        const quantityToRestore = quantityByItem.get(inventoryItemId);
+
+        if (!inventoryItem) {
+          await transaction.rollback();
+          return res.status(400).json({ error: `Item with ID ${inventoryItemId} not found` });
+        }
+
+        await inventoryItem.increment('quantity', {
+          by: quantityToRestore,
           transaction
         });
       }
@@ -782,7 +884,7 @@ class SalesController {
         }
         
         // Decrement income summaries
-        for (const [ownerId, incomeData] of Object.entries(ownerIncomes)) {
+        for (const [ownerId, incomeData] of SalesController.getSortedOwnerIncomeEntries(ownerIncomes)) {
           const summary = await IncomeSummary.findOne({
             where: { owner_id: ownerId, date: saleDate },
             transaction
@@ -820,6 +922,9 @@ class SalesController {
         await transaction.rollback();
       }
       console.error('Delete sale error:', error);
+      if (SalesController.isRetryableTransactionError(error)) {
+        return res.status(409).json({ error: 'Request conflicted with another update. Please retry.' });
+      }
       res.status(500).json({ error: 'Internal server error' });
     }
   }

@@ -52,6 +52,20 @@ const Device = sequelize.define('Device', {
     allowNull: false,
     defaultValue: '09:00:00',
   },
+  expiry_alerts: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: true,
+  },
+  expiry_alert_days_before: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 30,
+  },
+  expiry_alert_time: {
+    type: DataTypes.TIME,
+    allowNull: false,
+    defaultValue: '09:00:00',
+  },
   print_layout_config: {
     type: DataTypes.JSONB,
     allowNull: true,
