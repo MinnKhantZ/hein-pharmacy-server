@@ -90,7 +90,7 @@ class IncomeController {
         JOIN owners o ON ins.owner_id = o.id
         WHERE 1=1
       `;
-      let params = [];
+      const params = [];
       let paramCount = 0;
 
       // Date filters
@@ -144,7 +144,7 @@ class IncomeController {
         JOIN owners o ON ins.owner_id = o.id
         WHERE EXTRACT(YEAR FROM date) = $1
       `;
-      let params = [year];
+      const params = [year];
       let paramCount = 1;
 
       // Owner filter
@@ -186,7 +186,7 @@ class IncomeController {
         JOIN sales s ON si.sale_id = s.id
         WHERE s.is_paid = TRUE
       `;
-      let params = [];
+      const params = [];
       let paramCount = 0;
 
       // Date filters
@@ -199,7 +199,7 @@ class IncomeController {
       if (end_date) {
         paramCount++;
         query += ` AND s.sale_date <= $${paramCount}`;
-        params.push(end_date + ' 23:59:59');
+        params.push(`${end_date  } 23:59:59`);
       }
 
       // Owner filter
@@ -244,7 +244,7 @@ class IncomeController {
         JOIN sales s ON si.sale_id = s.id
         WHERE s.is_paid = TRUE
       `;
-      let params = [];
+      const params = [];
       let paramCount = 0;
 
       // Date filters
@@ -257,7 +257,7 @@ class IncomeController {
       if (end_date) {
         paramCount++;
         query += ` AND s.sale_date <= $${paramCount}`;
-        params.push(end_date + ' 23:59:59');
+        params.push(`${end_date  } 23:59:59`);
       }
 
       // Owner filter
@@ -290,7 +290,7 @@ class IncomeController {
       const { start_date, end_date, owner_id } = req.query;
       
       let ownerFilter = '';
-      let params = [];
+      const params = [];
       let paramCount = 0;
 
       // Date and owner filters
@@ -304,7 +304,7 @@ class IncomeController {
       if (end_date) {
         paramCount++;
         dateFilter += ` AND s.sale_date <= $${paramCount}`;
-        params.push(end_date + ' 23:59:59');
+        params.push(`${end_date  } 23:59:59`);
       }
 
       if (req.user.username !== 'admin') {

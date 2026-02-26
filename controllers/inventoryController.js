@@ -200,6 +200,15 @@ class InventoryController {
         }
       }
 
+      // Get old quantity before update
+      let oldQuantity = 0;
+      if (quantity !== undefined) {
+        const oldItem = await pool.query('SELECT quantity FROM inventory_items WHERE id = $1', [id]);
+        if (oldItem.rows.length > 0) {
+          oldQuantity = oldItem.rows[0].quantity;
+        }
+      }
+
       // Build dynamic query for owner_id
       let query = `UPDATE inventory_items 
          SET name = COALESCE($1, name),
@@ -233,6 +242,24 @@ class InventoryController {
 
       if (result.rows.length === 0) {
         return res.status(404).json({ error: 'Item not found' });
+      }
+
+      // If quantity was updated, sync related items
+      if (quantity !== undefined) {
+        const UnitConversionService = require('../services/unitConversionService');
+        const sequelize = require('../models/index');
+        const transaction = await sequelize.transaction();
+        try {
+          const delta = Number(quantity) - Number(oldQuantity);
+          
+          if (delta !== 0) {
+            await UnitConversionService.propagateQuantityChange(id, delta, transaction);
+          }
+          await transaction.commit();
+        } catch (err) {
+          await transaction.rollback();
+          console.error('Error propagating quantity change:', err);
+        }
       }
 
       res.json({

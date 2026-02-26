@@ -4,6 +4,7 @@ const InventoryItem = require('../models/inventory_item');
 const IncomeSummary = require('../models/income_summary');
 const sequelize = require('../models/index');
 const pool = require('../config/database');
+const UnitConversionService = require('../services/unitConversionService');
 
 class SalesController {
   static aggregateQuantitiesByInventoryItem(items) {
@@ -73,10 +74,11 @@ class SalesController {
           return res.status(400).json({ error: `Item with ID ${inventoryItemId} not found` });
         }
 
-        if (Number(inventoryItem.quantity) < requestedQuantity) {
+        const availableStock = Math.floor(Number(inventoryItem.quantity));
+        if (availableStock < requestedQuantity) {
           await transaction.rollback();
           return res.status(400).json({
-            error: `Insufficient stock for ${inventoryItem.name}. Available: ${inventoryItem.quantity}, Requested: ${requestedQuantity}`
+            error: `Insufficient stock for ${inventoryItem.name}. Available: ${availableStock}, Requested: ${requestedQuantity}`
           });
         }
       }
@@ -138,6 +140,14 @@ class SalesController {
           by: requestedQuantity,
           transaction
         });
+      }
+
+      // Cascade quantity changes through unit conversions
+      for (const inventoryItemId of requestedInventoryItemIds) {
+        const requestedQuantity = requestedQuantityByItem.get(inventoryItemId);
+        await UnitConversionService.propagateQuantityChange(
+          inventoryItemId, -requestedQuantity, transaction
+        );
       }
       
       // Calculate income per owner
@@ -258,8 +268,8 @@ class SalesController {
       const offset = (page - 1) * limit;
 
       // Build WHERE conditions for filtering sales
-      let whereConditions = [];
-      let params = [];
+      const whereConditions = [];
+      const params = [];
       let paramCount = 0;
 
       // Date filters
@@ -272,7 +282,7 @@ class SalesController {
       if (end_date) {
         paramCount++;
         whereConditions.push(`s.sale_date <= $${paramCount}`);
-        params.push(end_date + ' 23:59:59');
+        params.push(`${end_date  } 23:59:59`);
       }
 
       // Payment method filter
@@ -299,7 +309,7 @@ class SalesController {
 
       // Build the WHERE clause
       const whereClause = whereConditions.length > 0 
-        ? 'WHERE ' + whereConditions.join(' AND ')
+        ? `WHERE ${  whereConditions.join(' AND ')}`
         : '';
 
       // Sorting - validate and sanitize sort parameters
@@ -373,7 +383,7 @@ class SalesController {
       const result = await pool.query(query, params);
 
       // Get total count - reuse the same WHERE conditions
-      let countQuery = `
+      const countQuery = `
         SELECT COUNT(*) 
         FROM sales s
         ${whereClause}
@@ -428,7 +438,7 @@ class SalesController {
         JOIN owners o ON si.owner_id = o.id
         WHERE s.id = $1
       `;
-      let params = [id];
+      const params = [id];
 
       // Everyone can see all sales (no admin restriction)
       query += ` GROUP BY s.id`;
@@ -599,7 +609,7 @@ class SalesController {
       for (const inventoryItemId of newQuantityByItem.keys()) {
         const inventoryItem = lockedInventoryItemsById.get(inventoryItemId);
         const quantityFromOldSale = oldQuantityByItem.get(inventoryItemId) || 0;
-        const effectiveAvailableQuantity = Number(inventoryItem?.quantity || 0) + quantityFromOldSale;
+        const effectiveAvailableQuantity = Math.floor(Number(inventoryItem?.quantity || 0) + quantityFromOldSale);
         const requestedQuantity = newQuantityByItem.get(inventoryItemId);
 
         if (!inventoryItem || !inventoryItem.is_active) {
@@ -779,6 +789,18 @@ class SalesController {
           });
         }
       }
+
+      // Cascade quantity changes through unit conversions
+      for (const inventoryItemId of allInventoryItemIds) {
+        const oldQuantity = oldQuantityByItem.get(inventoryItemId) || 0;
+        const newQuantity = newQuantityByItem.get(inventoryItemId) || 0;
+        const netDelta = oldQuantity - newQuantity;
+        if (netDelta !== 0) {
+          await UnitConversionService.propagateQuantityChange(
+            inventoryItemId, netDelta, transaction
+          );
+        }
+      }
       
       await transaction.commit();
       
@@ -857,6 +879,14 @@ class SalesController {
           by: quantityToRestore,
           transaction
         });
+      }
+
+      // Cascade quantity restoration through unit conversions
+      for (const inventoryItemId of inventoryItemIds) {
+        const quantityToRestore = quantityByItem.get(inventoryItemId);
+        await UnitConversionService.propagateQuantityChange(
+          inventoryItemId, quantityToRestore, transaction
+        );
       }
       
       // If sale was paid, adjust income summary

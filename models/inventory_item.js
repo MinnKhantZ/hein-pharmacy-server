@@ -31,7 +31,7 @@ InventoryItem.init({
     defaultValue: 'pieces',
   },
   quantity: {
-    type: DataTypes.INTEGER,
+    type: DataTypes.DECIMAL(15, 6),
     defaultValue: 0,
   },
   unit_price: {
