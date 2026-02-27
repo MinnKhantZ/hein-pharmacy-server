@@ -13,6 +13,7 @@ const incomeRoutes = require('./routes/income');
 const deviceRoutes = require('./routes/devices');
 const notificationRoutes = require('./routes/notifications');
 const unitConversionRoutes = require('./routes/unitConversions');
+const invoiceRoutes = require('./routes/invoices');
 const cronService = require('./services/cronService');
 
 const app = express();
@@ -83,6 +84,7 @@ app.use('/api/income', incomeRoutes);
 app.use('/api/devices', deviceRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/unit-conversions', unitConversionRoutes);
+app.use('/api/invoices', invoiceRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

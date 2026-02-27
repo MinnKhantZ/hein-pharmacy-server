@@ -75,9 +75,44 @@ const validateSale = (req, res, next) => {
   next();
 };
 
+const validateInvoice = (req, res, next) => {
+  const schema = Joi.object({
+    invoice_id: Joi.string().min(1).max(120).required(),
+    company_name: Joi.string().min(1).max(200).required(),
+    payment_method: Joi.string().valid('cash', 'credit').required(),
+    invoice_date: Joi.date().iso().required(),
+    image_url: Joi.string().uri().required()
+  });
+
+  const { error } = schema.validate(req.body);
+  if (error) {
+    return res.status(400).json({ error: error.details[0].message });
+  }
+
+  next();
+};
+
+const validateInvoiceSignedUrlRequest = (req, res, next) => {
+  const schema = Joi.object({
+    filename: Joi.string().min(1).max(255).required(),
+    content_type: Joi.string()
+      .valid('image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif')
+      .required()
+  });
+
+  const { error } = schema.validate(req.body);
+  if (error) {
+    return res.status(400).json({ error: error.details[0].message });
+  }
+
+  next();
+};
+
 module.exports = {
   validateOwnerRegistration,
   validateOwnerLogin,
   validateInventoryItem,
-  validateSale
+  validateSale,
+  validateInvoice,
+  validateInvoiceSignedUrlRequest
 };

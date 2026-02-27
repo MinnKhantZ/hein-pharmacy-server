@@ -208,42 +208,42 @@ class SalesController {
       });
       
       // Send notifications after successful transaction
-      const notificationService = require('../services/notificationService');
+      // const notificationService = require('../services/notificationService');
       
-      try {
-        // Get all active devices with their notification preferences
-        // Exclude the device that created the sale from receiving the sales notification
-        const devicesResult = await pool.query(
-          'SELECT push_token, low_stock_alerts, sales_notifications FROM devices WHERE is_active = true'
-        );
+      // try {
+      //   // Get all active devices with their notification preferences
+      //   // Exclude the device that created the sale from receiving the sales notification
+      //   const devicesResult = await pool.query(
+      //     'SELECT push_token, low_stock_alerts, sales_notifications FROM devices WHERE is_active = true'
+      //   );
         
-        console.log(`📱 Found ${devicesResult.rows.length} active device(s) for notifications`);
+      //   console.log(`📱 Found ${devicesResult.rows.length} active device(s) for notifications`);
         
-        if (devicesResult.rows.length === 0) {
-          console.log('⚠️ No active devices found. Notifications will not be sent.');
-        } else {
-          // Send sales notification to devices that have it enabled
-          // EXCLUDE the device that created this sale
-          const salesTokens = devicesResult.rows
-            .filter(device => device.sales_notifications)
-            .filter(device => device.push_token !== device_push_token) // Exclude creating device
-            .map(device => device.push_token);
+      //   if (devicesResult.rows.length === 0) {
+      //     console.log('⚠️ No active devices found. Notifications will not be sent.');
+      //   } else {
+      //     // Send sales notification to devices that have it enabled
+      //     // EXCLUDE the device that created this sale
+      //     const salesTokens = devicesResult.rows
+      //       .filter(device => device.sales_notifications)
+      //       .filter(device => device.push_token !== device_push_token) // Exclude creating device
+      //       .map(device => device.push_token);
           
-          if (salesTokens.length > 0) {
-            console.log(`💰 Sending sales notification for sale #${sale.id} to ${salesTokens.length} device(s) (excluding creator)`);
-            await notificationService.sendDailySalesNotification(salesTokens, {
-              sale_id: sale.id,
-              total_amount: totalAmount,
-              items_count: saleItemsData.length,
-            });
-          } else {
-            console.log('⚠️ No other devices to notify about this sale');
-          }
-        }
-      } catch (notifError) {
-        // Don't fail the sale if notification fails
-        console.error('❌ Error sending notifications:', notifError.message);
-      }
+      //     if (salesTokens.length > 0) {
+      //       console.log(`💰 Sending sales notification for sale #${sale.id} to ${salesTokens.length} device(s) (excluding creator)`);
+      //       await notificationService.sendDailySalesNotification(salesTokens, {
+      //         sale_id: sale.id,
+      //         total_amount: totalAmount,
+      //         items_count: saleItemsData.length,
+      //       });
+      //     } else {
+      //       console.log('⚠️ No other devices to notify about this sale');
+      //     }
+      //   }
+      // } catch (notifError) {
+      //   // Don't fail the sale if notification fails
+      //   console.error('❌ Error sending notifications:', notifError.message);
+      // }
       
       res.status(201).json({
         message: 'Sale created successfully',
