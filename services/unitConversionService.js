@@ -67,6 +67,53 @@ class UnitConversionService {
       }
     }
   }
+
+  /**
+   * Propagate an expiry date change through the unit conversion chain.
+   * All items linked to the given item will be updated to the same expiry date.
+   *
+   * @param {number} itemId - The item whose expiry date changed
+   * @param {string|null} expiryDate - The new expiry date value
+   * @param {object} transaction - Sequelize transaction
+   * @param {Set} visited - Set of already-processed item IDs (prevents infinite loops)
+   */
+  static async propagateExpiryDateChange(itemId, expiryDate, transaction, visited = new Set()) {
+    const numericItemId = Number(itemId);
+    if (visited.has(numericItemId)) return;
+    visited.add(numericItemId);
+
+    // Find all conversions involving this item
+    const conversions = await UnitConversion.findAll({
+      where: {
+        [Op.or]: [
+          { base_item_id: numericItemId },
+          { package_item_id: numericItemId }
+        ]
+      },
+      transaction
+    });
+
+    for (const conversion of conversions) {
+      const relatedItemId = Number(conversion.base_item_id) === numericItemId
+        ? Number(conversion.package_item_id)
+        : Number(conversion.base_item_id);
+
+      if (visited.has(relatedItemId)) continue;
+
+      const relatedItem = await InventoryItem.findByPk(relatedItemId, {
+        transaction,
+        lock: transaction.LOCK.UPDATE
+      });
+
+      if (relatedItem && relatedItem.is_active) {
+        await relatedItem.update({ expiry_date: expiryDate || null }, { transaction });
+
+        await UnitConversionService.propagateExpiryDateChange(
+          relatedItemId, expiryDate, transaction, visited
+        );
+      }
+    }
+  }
 }
 
 module.exports = UnitConversionService;

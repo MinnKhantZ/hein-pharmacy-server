@@ -262,6 +262,20 @@ class InventoryController {
         }
       }
 
+      // If expiry date was explicitly provided, sync to all linked items
+      if (hasExpiryDateField) {
+        const UnitConversionService = require('../services/unitConversionService');
+        const sequelize = require('../models/index');
+        const transaction = await sequelize.transaction();
+        try {
+          await UnitConversionService.propagateExpiryDateChange(id, expiry_date || null, transaction);
+          await transaction.commit();
+        } catch (err) {
+          await transaction.rollback();
+          console.error('Error propagating expiry date change:', err);
+        }
+      }
+
       res.json({
         message: 'Item updated successfully',
         item: result.rows[0]

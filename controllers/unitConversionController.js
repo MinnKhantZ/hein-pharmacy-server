@@ -106,20 +106,26 @@ class UnitConversionController {
         conversion_rate
       }, { transaction });
 
-      // Sync quantities if a source item is specified
+      // Sync quantities and expiry dates if a source item is specified
       if (sync_source_item_id) {
         const rate = Number(conversion_rate);
 
         if (Number(sync_source_item_id) === Number(base_item_id)) {
-          // Use base item's quantity as the source of truth
+          // Use base item's quantity and expiry date as the source of truth
           const baseQty = Number(baseItem.quantity);
           const newPackageQty = baseQty / rate;
-          await packageItem.update({ quantity: newPackageQty }, { transaction });
+          await packageItem.update({ 
+            quantity: newPackageQty,
+            expiry_date: baseItem.expiry_date 
+          }, { transaction });
         } else if (Number(sync_source_item_id) === Number(package_item_id)) {
-          // Use package item's quantity as the source of truth
+          // Use package item's quantity and expiry date as the source of truth
           const packageQty = Number(packageItem.quantity);
           const newBaseQty = packageQty * rate;
-          await baseItem.update({ quantity: newBaseQty }, { transaction });
+          await baseItem.update({ 
+            quantity: newBaseQty,
+            expiry_date: packageItem.expiry_date 
+          }, { transaction });
         }
       }
 
