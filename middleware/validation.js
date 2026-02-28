@@ -81,7 +81,7 @@ const validateInvoice = (req, res, next) => {
     company_name: Joi.string().min(1).max(200).required(),
     payment_method: Joi.string().valid('cash', 'credit').required(),
     invoice_date: Joi.date().iso().required(),
-    image_url: Joi.string().uri().required()
+    image_url: Joi.string().min(1).required()
   });
 
   const { error } = schema.validate(req.body);

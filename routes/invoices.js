@@ -5,6 +5,16 @@ const { validateInvoice, validateInvoiceSignedUrlRequest } = require('../middlew
 
 const router = express.Router();
 
+// --- Public proxy download (no auth, keys are unguessable UUIDs) ---
+router.get('/image/*', InvoiceController.proxyGetImage);
+
+// Server proxy upload — auth via HMAC upload token, no JWT required
+router.put(
+  '/upload',
+  express.raw({ type: ['image/*', 'application/octet-stream'], limit: '20mb' }),
+  InvoiceController.proxyUploadImage
+);
+
 router.use(authenticateToken);
 
 router.get('/', InvoiceController.getInvoices);

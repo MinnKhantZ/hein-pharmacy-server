@@ -1,5 +1,12 @@
 const pool = require('../config/database');
-const { createInvoiceUploadSignedUrl } = require('../services/r2Service');
+const {
+  createInvoiceUploadSignedUrl,
+  extractKeyFromImageUrl,
+  resolveImageUrl,
+  getInvoiceImageStream,
+  uploadInvoiceImageByKey,
+  verifyUploadToken
+} = require('../services/r2Service');
 
 class InvoiceController {
   static ensureAdmin(req, res) {
@@ -21,12 +28,15 @@ class InvoiceController {
 
       const { invoice_id, company_name, payment_method, invoice_date, image_url } = req.body;
 
+      // Normalize image_url to key-only for storage (backward compat)
+      const normalizedImageUrl = extractKeyFromImageUrl(image_url);
+
       console.log('createInvoice params:', {
         invoice_id,
         company_name,
         payment_method,
         invoice_date,
-        image_url,
+        image_url: normalizedImageUrl,
         created_by: req.user.id
       });
 
@@ -35,13 +45,16 @@ class InvoiceController {
           (invoice_id, company_name, payment_method, invoice_date, image_url, created_by, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
          RETURNING *`,
-        [invoice_id, company_name, payment_method, invoice_date, image_url, req.user.id]
+        [invoice_id, company_name, payment_method, invoice_date, normalizedImageUrl, req.user.id]
       );
 
-      console.log('createInvoice succeeded, inserted row:', insertResult.rows[0]);
+      const inserted = insertResult.rows[0];
+      inserted.image_url = resolveImageUrl(inserted.image_url);
+
+      console.log('createInvoice succeeded, inserted row:', inserted);
       return res.status(201).json({
         message: 'Invoice record created successfully',
-        invoice: insertResult.rows[0]
+        invoice: inserted
       });
     } catch (error) {
       console.error('Create invoice error:', error, 'body:', req.body);
@@ -66,7 +79,7 @@ class InvoiceController {
       const { filename, content_type } = req.body;
       console.log('getInvoiceUploadSignedUrl params:', { filename, content_type });
 
-      const { signedUrl, imageUrl, key, uploadToken, useWorkerProxy, multipart } = await createInvoiceUploadSignedUrl({
+      const { signedUrl, imageUrl, key, uploadToken, useWorkerProxy, useServerProxy, multipart } = await createInvoiceUploadSignedUrl({
         filename,
         contentType: content_type
       });
@@ -80,6 +93,7 @@ class InvoiceController {
         contentType: content_type,
         uploadToken,
         useWorkerProxy,
+        useServerProxy,
         multipart
       });
     } catch (error) {
@@ -171,8 +185,14 @@ class InvoiceController {
 
       const total = Number(countResult.rows[0].total || 0);
 
+      // Resolve image_url for each invoice
+      const invoices = dataResult.rows.map((row) => ({
+        ...row,
+        image_url: resolveImageUrl(row.image_url)
+      }));
+
       return res.json({
-        invoices: dataResult.rows,
+        invoices,
         pagination: {
           page: parseInt(page, 10),
           limit: parseInt(limit, 10),
@@ -205,7 +225,10 @@ class InvoiceController {
         return res.status(404).json({ error: 'Invoice not found' });
       }
 
-      return res.json(result.rows[0]);
+      const invoice = result.rows[0];
+      invoice.image_url = resolveImageUrl(invoice.image_url);
+
+      return res.json(invoice);
     } catch (error) {
       console.error('Get invoice error:', error);
       return res.status(500).json({ error: 'Internal server error' });
@@ -221,19 +244,25 @@ class InvoiceController {
       const { id } = req.params;
       const { invoice_id, company_name, payment_method, invoice_date, image_url } = req.body;
 
+      // Normalize image_url to key-only for storage (backward compat)
+      const normalizedImageUrl = extractKeyFromImageUrl(image_url);
+
       const result = await pool.query(
         `UPDATE invoices
          SET invoice_id=$1, company_name=$2, payment_method=$3, invoice_date=$4, image_url=$5, updated_at=NOW()
          WHERE id=$6
          RETURNING *`,
-        [invoice_id, company_name, payment_method, invoice_date, image_url, id]
+        [invoice_id, company_name, payment_method, invoice_date, normalizedImageUrl, id]
       );
 
       if (result.rows.length === 0) {
         return res.status(404).json({ error: 'Invoice not found' });
       }
 
-      return res.json({ message: 'Invoice updated successfully', invoice: result.rows[0] });
+      const updated = result.rows[0];
+      updated.image_url = resolveImageUrl(updated.image_url);
+
+      return res.json({ message: 'Invoice updated successfully', invoice: updated });
     } catch (error) {
       console.error('Update invoice error:', error);
       if (error.code === '23505') {
@@ -265,7 +294,7 @@ class InvoiceController {
       await deleteInvoiceImageByUrl(imageUrl);
 
       // Delete invoice record
-      const result = await pool.query(
+      await pool.query(
         'DELETE FROM invoices WHERE id=$1 RETURNING id',
         [id]
       );
@@ -273,6 +302,73 @@ class InvoiceController {
       return res.json({ message: 'Invoice deleted successfully' });
     } catch (error) {
       console.error('Delete invoice error:', error);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  /**
+   * Proxy upload: client streams the image body through our server to R2.
+   * The upload token (from getInvoiceUploadSignedUrl) carries the key & contentType.
+   */
+  static async proxyUploadImage(req, res) {
+    try {
+      const token = req.headers['x-upload-token'];
+      if (!token) {
+        return res.status(400).json({ error: 'Missing X-Upload-Token header' });
+      }
+
+      const payload = verifyUploadToken(token);
+      if (!payload) {
+        return res.status(401).json({ error: 'Invalid or expired upload token' });
+      }
+
+      const { key, contentType } = payload;
+      const buffer = req.body; // express.raw() gives us a Buffer
+
+      if (!buffer || !buffer.length) {
+        return res.status(400).json({ error: 'Empty request body' });
+      }
+
+      await uploadInvoiceImageByKey(key, buffer, contentType);
+
+      console.log('proxyUploadImage succeeded, key:', key);
+      return res.json({
+        success: true,
+        key,
+        downloadUrl: resolveImageUrl(key),
+      });
+    } catch (error) {
+      console.error('Proxy upload error:', error);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  /**
+   * Proxy download: stream an invoice image from R2 through our server.
+   * Public endpoint — keys contain UUIDs and are unguessable.
+   */
+  static async proxyGetImage(req, res) {
+    try {
+      // req.params[0] captures everything after /image/
+      const key = req.params[0];
+      if (!key) {
+        return res.status(400).json({ error: 'Missing image key' });
+      }
+
+      const result = await getInvoiceImageStream(key);
+      if (!result) {
+        return res.status(404).json({ error: 'Image not found' });
+      }
+
+      res.set('Content-Type', result.contentType);
+      if (result.contentLength) {
+        res.set('Content-Length', String(result.contentLength));
+      }
+      res.set('Cache-Control', 'public, max-age=31536000');
+
+      result.body.pipe(res);
+    } catch (error) {
+      console.error('Proxy get image error:', error);
       return res.status(500).json({ error: 'Internal server error' });
     }
   }
