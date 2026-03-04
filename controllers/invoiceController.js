@@ -1,4 +1,4 @@
-const pool = require('../config/database');
+﻿const pool = require('../config/database');
 const {
   createInvoiceUploadSignedUrl,
   extractKeyFromImageUrl,
@@ -9,22 +9,9 @@ const {
 } = require('../services/r2Service');
 
 class InvoiceController {
-  static ensureAdmin(req, res) {
-    if (req.user.username !== 'admin') {
-      res.status(403).json({ error: 'Access denied' });
-      return false;
-    }
-
-    return true;
-  }
-
   static async createInvoice(req, res) {
     try {
       console.log('createInvoice invoked, user:', req.user && req.user.id, 'body:', req.body);
-      if (!InvoiceController.ensureAdmin(req, res)) {
-        console.log('createInvoice aborted: non-admin user', req.user && req.user.username);
-        return;
-      }
 
       const { invoice_id, company_name, payment_method, invoice_date, image_url } = req.body;
 
@@ -71,10 +58,6 @@ class InvoiceController {
   static async getInvoiceUploadSignedUrl(req, res) {
     try {
       console.log('getInvoiceUploadSignedUrl called by', req.user && req.user.id, 'body', req.body);
-      if (!InvoiceController.ensureAdmin(req, res)) {
-        console.log('getInvoiceUploadSignedUrl aborted for non-admin user', req.user && req.user.username);
-        return;
-      }
 
       const { filename, content_type } = req.body;
       console.log('getInvoiceUploadSignedUrl params:', { filename, content_type });
@@ -109,10 +92,6 @@ class InvoiceController {
 
   static async getInvoices(req, res) {
     try {
-      if (!InvoiceController.ensureAdmin(req, res)) {
-        return;
-      }
-
       const {
         page = 1,
         limit = 20,
@@ -208,10 +187,6 @@ class InvoiceController {
 
   static async getInvoice(req, res) {
     try {
-      if (!InvoiceController.ensureAdmin(req, res)) {
-        return;
-      }
-
       const { id } = req.params;
 
       const result = await pool.query(
@@ -237,10 +212,6 @@ class InvoiceController {
 
   static async updateInvoice(req, res) {
     try {
-      if (!InvoiceController.ensureAdmin(req, res)) {
-        return;
-      }
-
       const { id } = req.params;
       const { invoice_id, company_name, payment_method, invoice_date, image_url } = req.body;
 
@@ -274,10 +245,6 @@ class InvoiceController {
 
   static async deleteInvoice(req, res) {
     try {
-      if (!InvoiceController.ensureAdmin(req, res)) {
-        return;
-      }
-
       const { id } = req.params;
       // Get image_url before deleting
       const selectResult = await pool.query(
