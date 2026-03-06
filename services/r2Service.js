@@ -163,7 +163,7 @@ async function createInvoiceUploadSignedUrl({ filename, contentType }) {
     const payload = {
       key,
       contentType,
-      expiresAt: Date.now() + (5 * 60 * 1000),
+      expiresAt: Date.now() + (30 * 60 * 1000),
     };
     // Reuse the same HMAC-signing logic as WorkerProxyService
     const data = JSON.stringify(payload);

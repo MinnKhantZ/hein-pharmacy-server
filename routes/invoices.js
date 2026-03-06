@@ -11,7 +11,7 @@ router.get('/image/*', InvoiceController.proxyGetImage);
 // Server proxy upload — auth via HMAC upload token, no JWT required
 router.put(
   '/upload',
-  express.raw({ type: ['image/*', 'application/octet-stream'], limit: '20mb' }),
+  express.raw({ type: ['image/*', 'application/octet-stream'], limit: '50mb' }),
   InvoiceController.proxyUploadImage
 );
 
